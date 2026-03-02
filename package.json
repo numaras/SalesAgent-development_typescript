@@ -1,0 +1,29 @@
+{
+  "name": "salesagent-ts",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pm2 start ecosystem.config.cjs",
+    "dev:server": "npm run dev --workspace=packages/server",
+    "dev:ui": "npm run dev --workspace=packages/ui",
+    "db:generate": "npm run db:generate --workspace=packages/server",
+    "db:migrate": "npm run db:migrate --workspace=packages/server",
+    "db:check": "npm run db:check --workspace=packages/server",
+    "db:seed": "npm run db:seed --workspace=packages/server",
+    "build": "npm run build --workspaces --if-present",
+    "build:server": "npm run build --workspace=packages/server",
+    "build:ui": "npm run build --workspace=packages/ui",
+    "test": "npm run test --workspaces --if-present",
+    "test:server": "npm run test --workspace=packages/server",
+    "test:schemas": "npm run test:schemas --workspace=packages/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

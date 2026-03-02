@@ -1,0 +1,59 @@
+# AdCP Sales Agent - Compose stack (infrastructure only: Postgres + Redis)
+#
+# Application processes run on the HOST via pm2:
+#   pm2 start ecosystem.config.cjs --only adcp-server   # Fastify :8080
+#   pm2 start ecosystem.config.cjs --only adcp-worker   # BullMQ worker
+#   pm2 start ecosystem.config.cjs --only ui-dev        # Vite UI :5173
+#
+# Endpoints (no nginx needed — Vite proxies all API calls to Fastify):
+#   http://localhost:5173   - Admin UI  (Vite dev server, proxies API to :8080)
+#   http://localhost:8080   - Fastify API, MCP (/mcp), A2A (/a2a) direct
+#
+# Database migrations (Drizzle / TypeScript tooling):
+#   npm run db:migrate
+#   docker compose --profile tools run --rm db-migrate
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: adcp
+      POSTGRES_USER: adcp_user
+      POSTGRES_PASSWORD: secure_password_change_me
+    volumes:
+      - adcp_postgres_data:/var/lib/postgresql/data
+    ports:
+      # Expose to localhost so pm2-managed server can reach it directly
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adcp_user -d adcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-migrate:
+    image: node:20-alpine
+    working_dir: /app
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgresql://adcp_user:secure_password_change_me@postgres:5432/adcp?sslmode=disable
+    volumes:
+      - ./:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "npm ci && npx drizzle-kit migrate --config=packages/server/drizzle.migrate.config.ts"
+
+volumes:
+  adcp_postgres_data:
