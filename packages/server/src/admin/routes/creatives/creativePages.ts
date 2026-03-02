@@ -67,7 +67,7 @@ const creativePagesRoute: FastifyPluginAsync = async (fastify: FastifyInstance) 
       .orderBy(desc(creatives.createdAt));
 
     // Batch-fetch all creative assignments for this tenant in one query (avoids N+1).
-    // creative_assignments has no Drizzle schema — accessed via raw SQL for DB parity.
+    // Kept as raw SQL for parity/readability, though a Drizzle schema exists.
     // Python: select(CreativeAssignment).filter_by(tenant_id=tenant_id, creative_id=...) per creative.
     const assignmentRows = await db.execute(
       sql`SELECT creative_id, media_buy_id, package_id FROM creative_assignments WHERE tenant_id = ${id}`,

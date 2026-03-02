@@ -89,7 +89,7 @@ const mediaBuyDetailRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
     }
 
     // creative_assignments_by_package (mirrors Python operations.py L146-167)
-    // Uses raw SQL — creative_assignments table has no Drizzle schema in TS migration scope.
+    // Uses raw SQL for parity/readability.
     type AssignmentRow = {
       package_id: string;
       creative_id: string;

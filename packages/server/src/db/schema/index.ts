@@ -6,6 +6,7 @@ export * from "./adapterConfigs.js";
 export * from "./products.js";
 export * from "./mediaBuys.js";
 export * from "./creatives.js";
+export * from "./creativeAssignments.js";
 export * from "./contexts.js";
 export * from "./workflowSteps.js";
 export * from "./authorizedProperties.js";
