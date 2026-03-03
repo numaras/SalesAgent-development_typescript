@@ -203,11 +203,9 @@ async function validateCreateCurrencyLimits(
     .limit(1);
 
   if (!limit) {
-    return {
-      errors: [
-        `Currency ${authoritativeCurrency} is not supported by this publisher.`,
-      ],
-    };
+    // No currency limits configured for this tenant — treat as unrestricted.
+    // Publishers that want to restrict currencies should add rows to currency_limits.
+    return null;
   }
 
   let flightDays = Math.floor(
