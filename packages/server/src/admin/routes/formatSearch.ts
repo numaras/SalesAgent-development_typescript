@@ -118,6 +118,9 @@ async function callAgentMcpTool(
   const sessionId = initRes.headers.get("Mcp-Session-Id");
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
 
+  // Consume init body to free the HTTP/2 stream before next request
+  await initRes.text().catch(() => undefined);
+
   const toolRes = await fetch(mcpUrl, {
     method: "POST",
     headers,

@@ -105,8 +105,12 @@ async function callAgentMcpTool(
 
   if (!initRes.ok) throw new Error(`MCP initialize failed (HTTP ${initRes.status})`);
 
+  // Extract session ID from header before consuming body
   const sessionId = initRes.headers.get("Mcp-Session-Id");
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
+
+  // Consume the init response body (required for HTTP/2 + SSE to free the stream)
+  await initRes.text().catch(() => undefined);
 
   const toolRes = await fetch(mcpUrl, {
     method: "POST",
