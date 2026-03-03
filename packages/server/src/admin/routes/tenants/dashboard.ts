@@ -121,8 +121,9 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
       .where(
         and(eq(creatives.tenantId, id), eq(creatives.status, "pending_review")),
       );
-    const needsAttention =
-      (failedBuys?.count ?? 0) + (pendingCreatives?.count ?? 0);
+    const pendingCreativesCount = pendingCreatives?.count ?? 0;
+    const failedBuysCount = failedBuys?.count ?? 0;
+    const needsAttention = failedBuysCount + pendingCreativesCount;
 
     // Revenue trend (30 days) for chart and revenue_change
     const activeBuys = await db
@@ -204,6 +205,8 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
         active_advertisers: principalsCount?.count ?? 0,
         products_count: productsCount?.count ?? 0,
         needs_attention: needsAttention,
+        pending_creatives_review: pendingCreativesCount,
+        failed_buys: failedBuysCount,
         revenue_change: revenueChange,
         revenue_change_abs: Math.abs(revenueChange),
         revenue_data: revenueTrend,
