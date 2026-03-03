@@ -28,32 +28,25 @@ type AgentEntry = {
   auth_credentials: string | null;
 };
 
-/** Default reference formats returned when discovery is unavailable. */
+/** Default reference formats returned when the creative agent is unreachable. */
 const DEFAULT_FORMATS: Format[] = [
-  {
-    format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_300x250" },
-    name: "Display 300x250",
-    description: "Medium Rectangle (IAB)",
-    type: "display",
-    renders: [{ dimensions: { width: 300, height: 250 }, label: "Primary" }],
-    is_standard: true,
-  },
-  {
-    format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_728x90" },
-    name: "Display 728x90",
-    description: "Leaderboard (IAB)",
-    type: "display",
-    renders: [{ dimensions: { width: 728, height: 90 }, label: "Primary" }],
-    is_standard: true,
-  },
-  {
-    format_id: { agent_url: DEFAULT_AGENT_URL, id: "video_16x9" },
-    name: "Video 16:9",
-    description: "Standard widescreen video",
-    type: "video",
-    renders: [{ dimensions: { width: 1920, height: 1080 }, label: "Primary" }],
-    is_standard: true,
-  },
+  // ── Display (IAB standard sizes) ──────────────────────────────────────── //
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_300x250" }, name: "Display 300×250", description: "Medium Rectangle (IAB)", type: "display", renders: [{ dimensions: { width: 300, height: 250 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_728x90" }, name: "Display 728×90", description: "Leaderboard (IAB)", type: "display", renders: [{ dimensions: { width: 728, height: 90 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_320x50" }, name: "Display 320×50", description: "Mobile Banner (IAB)", type: "display", renders: [{ dimensions: { width: 320, height: 50 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_300x600" }, name: "Display 300×600", description: "Half Page (IAB)", type: "display", renders: [{ dimensions: { width: 300, height: 600 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_970x250" }, name: "Display 970×250", description: "Billboard (IAB)", type: "display", renders: [{ dimensions: { width: 970, height: 250 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_160x600" }, name: "Display 160×600", description: "Wide Skyscraper (IAB)", type: "display", renders: [{ dimensions: { width: 160, height: 600 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "display_320x100" }, name: "Display 320×100", description: "Large Mobile Banner", type: "display", renders: [{ dimensions: { width: 320, height: 100 }, label: "Primary" }], is_standard: true },
+  // ── Video ─────────────────────────────────────────────────────────────── //
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "video_16x9" }, name: "Video 16:9", description: "Standard widescreen pre-roll / mid-roll", type: "video", renders: [{ dimensions: { width: 1920, height: 1080 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "video_vast" }, name: "VAST Tag", description: "Video via VAST XML redirect (any player)", type: "video", renders: [{ dimensions: { width: 1280, height: 720 }, label: "Primary" }], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "video_9x16" }, name: "Video 9:16", description: "Vertical video (Stories / Reels)", type: "video", renders: [{ dimensions: { width: 1080, height: 1920 }, label: "Primary" }], is_standard: false },
+  // ── Native ────────────────────────────────────────────────────────────── //
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "native_feed" }, name: "Native In-Feed", description: "Native ad within content feeds", type: "native", renders: [], is_standard: true },
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "native_content" }, name: "Native Content Recommendation", description: "Sponsored content recommendation widget", type: "native", renders: [], is_standard: true },
+  // ── Audio ─────────────────────────────────────────────────────────────── //
+  { format_id: { agent_url: DEFAULT_AGENT_URL, id: "audio_standard" }, name: "Audio Ad", description: "Audio spot for streaming / podcast", type: "audio", renders: [], is_standard: true },
 ];
 
 export interface FormatServiceContext {
