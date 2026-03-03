@@ -10,6 +10,7 @@ import { db } from "../../db/client.js";
 import { creativeAgents } from "../../db/schema/agents.js";
 import { tenants } from "../../db/schema/tenants.js";
 import { validateOutboundUrl } from "../../security/outboundUrl.js";
+import { listFormats } from "../../services/formatService.js";
 import { getAdminSession } from "../services/sessionService.js";
 
 const FORMAT_TEMPLATES: Record<
@@ -283,50 +284,45 @@ const formatSearchRoute: FastifyPluginAsync = async (fastify: FastifyInstance) =
     const session = getAdminSession(request);
     if (!session.user) return reply.code(401).send({ error: "UNAUTHENTICATED" });
 
-    const q = request.query as { tenant_id?: string; type?: string; force_refresh?: string };
+    const q = request.query as { tenant_id?: string; type?: string };
+    const tenantId = typeof q.tenant_id === "string" ? q.tenant_id : "";
     const typeFilter = typeof q.type === "string" ? q.type.toLowerCase() : null;
 
     try {
-      const agentList = await buildAgentList(q.tenant_id);
-      const byAgent: Record<
-        string,
-        Array<{
-          format_id: { id: string; agent_url: string };
-          name: string;
-          type: string;
-          category: string | null;
-          description: string | null;
-          is_standard: boolean;
-          dimensions: string | null;
-        }>
-      > = {};
-      let totalFormats = 0;
+      // Use formatService which has built-in DEFAULT_FORMATS fallback — always returns formats.
+      const result = await listFormats({ tenantId }, {});
+      let formats = result.formats;
+      if (typeFilter) formats = formats.filter((f) => f.type?.toLowerCase() === typeFilter);
 
-      await Promise.allSettled(
-        agentList.map(async (cfg) => {
-          try {
-            let fmts = await fetchFormatsFromAgent(cfg);
-            if (typeFilter) fmts = fmts.filter((f) => f.type.toLowerCase() === typeFilter);
-            if (!byAgent[cfg.agent_url]) byAgent[cfg.agent_url] = [];
-            for (const f of fmts) {
-              byAgent[cfg.agent_url]!.push({
-                format_id: { id: f.format_id, agent_url: cfg.agent_url },
-                name: f.name,
-                type: f.type,
-                category: f.category,
-                description: f.description,
-                is_standard: f.is_standard,
-                dimensions: f.dimensions,
-              });
-              totalFormats++;
-            }
-          } catch {
-            // Individual agent failure doesn't abort the list
-          }
-        })
-      );
+      const byAgent: Record<string, Array<{
+        format_id: { id: string; agent_url: string };
+        name: string;
+        type: string;
+        category: string | null;
+        description: string | null;
+        is_standard: boolean;
+        dimensions: string | null;
+      }>> = {};
 
-      return reply.send({ agents: byAgent, total_formats: totalFormats });
+      for (const f of formats) {
+        const agentUrl = f.format_id.agent_url;
+        if (!byAgent[agentUrl]) byAgent[agentUrl] = [];
+        const render = f.renders?.[0];
+        const dims = render?.dimensions?.width && render?.dimensions?.height
+          ? `${render.dimensions.width}x${render.dimensions.height}`
+          : null;
+        byAgent[agentUrl].push({
+          format_id: { id: f.format_id.id, agent_url: agentUrl },
+          name: f.name ?? f.format_id.id,
+          type: f.type ?? "display",
+          category: null,
+          description: f.description ?? null,
+          is_standard: f.is_standard ?? false,
+          dimensions: dims,
+        });
+      }
+
+      return reply.send({ agents: byAgent, total_formats: formats.length });
     } catch (err: unknown) {
       return reply.code(500).send({ error: String((err as Error).message ?? err) });
     }
