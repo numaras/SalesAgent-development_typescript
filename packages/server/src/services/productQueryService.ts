@@ -60,7 +60,7 @@ function toPricingOptions(
           : `${row.productId}_po_${index}`,
       pricing_model:
         typeof item["pricing_model"] === "string"
-          ? (item["pricing_model"] as Product["pricing_options"][number]["pricing_model"])
+          ? (item["pricing_model"].toLowerCase() as Product["pricing_options"][number]["pricing_model"])
           : "cpm",
       currency: typeof item["currency"] === "string" ? item["currency"] : "USD",
       fixed_price:

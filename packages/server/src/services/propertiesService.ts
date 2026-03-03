@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 
 import { db } from "../db/client.js";
 import { auditLogs } from "../db/schema/auditLogs.js";
+import { authorizedProperties } from "../db/schema/authorizedProperties.js";
 import { publisherPartners } from "../db/schema/publisherPartners.js";
 import { tenants } from "../db/schema/tenants.js";
 import type {
@@ -79,12 +80,25 @@ export async function listAuthorizedProperties(
   const principalId = ctx.principalId ?? "anonymous";
 
   try {
-    const rows = await db
-      .select({ publisherDomain: publisherPartners.publisherDomain })
-      .from(publisherPartners)
-      .where(eq(publisherPartners.tenantId, ctx.tenantId));
+    // Query both tables: authorized_properties (added via Admin UI) and
+    // publisher_partners (added via publisher network sync).
+    const [apRows, ppRows] = await Promise.all([
+      db
+        .select({ publisherDomain: authorizedProperties.publisherDomain })
+        .from(authorizedProperties)
+        .where(eq(authorizedProperties.tenantId, ctx.tenantId)),
+      db
+        .select({ publisherDomain: publisherPartners.publisherDomain })
+        .from(publisherPartners)
+        .where(eq(publisherPartners.tenantId, ctx.tenantId)),
+    ]);
 
-    const publisherDomains = [...rows.map((r) => r.publisherDomain)].sort();
+    const publisherDomains = [
+      ...new Set([
+        ...apRows.map((r) => r.publisherDomain),
+        ...ppRows.map((r) => r.publisherDomain),
+      ]),
+    ].sort();
 
     if (publisherDomains.length === 0) {
       const response: ListAuthorizedPropertiesResponse = {
