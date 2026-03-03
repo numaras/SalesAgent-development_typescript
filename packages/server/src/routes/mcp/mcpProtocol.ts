@@ -89,7 +89,10 @@ function buildMcpServer(auth: AuthContext | null, tenantId: string | null) {
     },
     async (params) => {
       if (!tenantId) return errResult("Cannot determine tenant.");
-      const result = await queryProducts({ tenantId }, params as never);
+      const result = await queryProducts(
+        { tenantId, principalId: auth?.principalId },
+        params as never,
+      );
       return okResult(result);
     },
   );
