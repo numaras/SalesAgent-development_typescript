@@ -148,11 +148,22 @@ async function callAgentMcpTool(
   }
 
   const result = rpc["result"] as Record<string, unknown> | undefined;
+
+  // Prefer structuredContent (machine-readable) over content[0].text (markdown)
+  if (result?.["structuredContent"] && typeof result["structuredContent"] === "object") {
+    return result["structuredContent"] as Record<string, unknown>;
+  }
+
+  // Fallback: try parsing content[0].text as JSON (some agents embed JSON there)
   const content = result?.["content"];
   if (Array.isArray(content) && content.length > 0) {
     const first = content[0] as Record<string, unknown>;
     if (first["type"] === "text" && typeof first["text"] === "string") {
-      return JSON.parse(first["text"]) as Record<string, unknown>;
+      try {
+        return JSON.parse(first["text"]) as Record<string, unknown>;
+      } catch {
+        // text is human-readable markdown, not JSON — ignore
+      }
     }
   }
   return result ?? {};

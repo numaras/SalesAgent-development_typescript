@@ -158,11 +158,20 @@ async function callAgentMcpTool(
   }
 
   const result = rpc["result"] as Record<string, unknown> | undefined;
+
+  if (result?.["structuredContent"] && typeof result["structuredContent"] === "object") {
+    return result["structuredContent"] as Record<string, unknown>;
+  }
+
   const content = result?.["content"];
   if (Array.isArray(content) && content.length > 0) {
     const first = content[0] as Record<string, unknown>;
     if (first["type"] === "text" && typeof first["text"] === "string") {
-      return JSON.parse(first["text"]) as Record<string, unknown>;
+      try {
+        return JSON.parse(first["text"]) as Record<string, unknown>;
+      } catch {
+        // markdown text, not JSON
+      }
     }
   }
   return result ?? {};
