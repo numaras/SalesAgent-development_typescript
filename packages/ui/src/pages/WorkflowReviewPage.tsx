@@ -121,67 +121,79 @@ function WorkflowReviewContent() {
   const step = data.step;
   const canAct = step.status === "requires_approval" || step.status === "pending_approval";
 
-  const statusStyle =
+  const card: React.CSSProperties = {
+    background: "rgba(13,21,38,0.85)",
+    border: "1px solid rgba(0,212,255,0.12)",
+    borderRadius: 10,
+    padding: "1.5rem",
+    marginBottom: "1rem",
+  };
+
+  const label: React.CSSProperties = { fontWeight: 600, color: "#4a7a9b", fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.06em" };
+  const value: React.CSSProperties = { color: "#dce8f5", margin: 0 };
+
+  const statusColors =
     step.status === "requires_approval" || step.status === "pending_approval"
-      ? { background: "#fef3c7", color: "#92400e" }
+      ? { background: "rgba(245,158,11,0.12)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.35)" }
       : step.status === "approved"
-        ? { background: "#d1fae5", color: "#065f46" }
+        ? { background: "rgba(0,229,160,0.1)", color: "#00e5a0", border: "1px solid rgba(0,229,160,0.3)" }
         : step.status === "rejected"
-          ? { background: "#fee2e2", color: "#991b1b" }
-          : { background: "#e5e7eb", color: "#374151" };
+          ? { background: "rgba(255,69,96,0.1)", color: "#ff4560", border: "1px solid rgba(255,69,96,0.3)" }
+          : { background: "rgba(0,212,255,0.08)", color: "#7da0c0", border: "1px solid rgba(0,212,255,0.15)" };
+
+  const statusLabel =
+    step.status === "requires_approval" || step.status === "pending_approval"
+      ? "⚠ Requires Your Approval"
+      : step.status === "approved" ? "✓ Approved"
+      : step.status === "rejected" ? "✗ Rejected"
+      : step.status;
 
   return (
     <BaseLayout tenantId={id}>
       <p style={{ marginBottom: "1rem" }}>
-        <Link to={`/tenant/${id}`} style={{ color: "var(--link, #06c)" }}>← Back to Dashboard</Link>
+        <Link to={`/tenant/${id}/workflows`} style={{ color: "#00d4ff" }}>← Back to Workflows</Link>
       </p>
-      <h1 style={{ fontFamily: "system-ui", marginBottom: "1rem" }}>Workflow Step Review</h1>
+      <h1 style={{ marginBottom: "1rem", fontWeight: 700 }}>Workflow Step Review</h1>
       <div style={{ marginBottom: "1.5rem" }}>
-        <span style={{ ...statusStyle, padding: "0.5rem 1rem", borderRadius: 6, fontWeight: 600 }}>
-          {step.status === "requires_approval" || step.status === "pending_approval" ? "⚠️ Requires Your Approval" : step.status === "approved" ? "✓ Approved" : step.status === "rejected" ? "✗ Rejected" : step.status}
+        <span style={{ ...statusColors, padding: "0.45rem 1rem", borderRadius: 6, fontWeight: 700, fontSize: "0.875rem" }}>
+          {statusLabel}
         </span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1.5rem" }}>
         <div>
-          <section style={{ background: "#fff", borderRadius: 12, padding: "1.5rem", marginBottom: "1rem", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
-            <h2 style={{ marginTop: 0, fontSize: "1.25rem" }}>Request Details</h2>
-            <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0.5rem 1rem", margin: "1rem 0" }}>
-              <dt style={{ fontWeight: 600, color: "#6b7280" }}>Tool:</dt>
-              <dd style={{ margin: 0 }}>{step.tool_name ?? "N/A"}</dd>
-              <dt style={{ fontWeight: 600, color: "#6b7280" }}>Step Type:</dt>
-              <dd style={{ margin: 0 }}>{step.step_type}</dd>
-              <dt style={{ fontWeight: 600, color: "#6b7280" }}>Created:</dt>
-              <dd style={{ margin: 0 }}>{step.created_at ? new Date(step.created_at).toLocaleString() : "N/A"}</dd>
+          <section style={card}>
+            <h2 style={{ marginTop: 0, fontSize: "1.1rem", color: "#e2e8f0" }}>Request Details</h2>
+            <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0.6rem 1.5rem", margin: "1rem 0" }}>
+              <dt style={label}>Tool</dt><dd style={value}>{step.tool_name ?? "N/A"}</dd>
+              <dt style={label}>Step Type</dt><dd style={value}>{step.step_type}</dd>
+              <dt style={label}>Created</dt><dd style={value}>{step.created_at ? new Date(step.created_at).toLocaleString() : "N/A"}</dd>
               {data.principal && (
-                <>
-                  <dt style={{ fontWeight: 600, color: "#6b7280" }}>Requested By:</dt>
-                  <dd style={{ margin: 0 }}>{data.principal.name} ({data.principal.principal_id})</dd>
-                </>
+                <><dt style={label}>Requested By</dt><dd style={value}>{data.principal.name}</dd></>
               )}
             </dl>
-            <h3 style={{ fontSize: "1rem", marginTop: "1rem", marginBottom: "0.5rem" }}>Request Payload</h3>
-            <pre style={{ background: "#f9fafb", padding: "1rem", borderRadius: 6, overflowX: "auto", fontSize: "0.875rem", maxHeight: 400 }}>
+            <h3 style={{ fontSize: "0.875rem", marginTop: "1.25rem", marginBottom: "0.5rem", ...label }}>Request Payload</h3>
+            <pre style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(0,212,255,0.08)", color: "#c8d8f0", padding: "1rem", borderRadius: 6, overflowX: "auto", fontSize: "0.8rem", maxHeight: 400, margin: 0 }}>
               {data.formatted_request || "{}"}
             </pre>
           </section>
 
           {step.response_data && (
-            <section style={{ background: "#fff", borderRadius: 12, padding: "1.5rem", marginBottom: "1rem", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
-              <h2 style={{ marginTop: 0, fontSize: "1.25rem" }}>Response Data</h2>
-              <pre style={{ background: "#f9fafb", padding: "1rem", borderRadius: 6, overflowX: "auto", fontSize: "0.875rem", maxHeight: 400 }}>
+            <section style={card}>
+              <h2 style={{ marginTop: 0, fontSize: "1.1rem", color: "#e2e8f0" }}>Response Data</h2>
+              <pre style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(0,212,255,0.08)", color: "#c8d8f0", padding: "1rem", borderRadius: 6, overflowX: "auto", fontSize: "0.8rem", maxHeight: 400, margin: 0 }}>
                 {JSON.stringify(step.response_data, null, 2)}
               </pre>
             </section>
           )}
 
           {step.comments && step.comments.length > 0 && (
-            <section style={{ background: "#fff", borderRadius: 12, padding: "1.5rem", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
-              <h2 style={{ marginTop: 0, fontSize: "1.25rem" }}>Comments</h2>
+            <section style={card}>
+              <h2 style={{ marginTop: 0, fontSize: "1.1rem", color: "#e2e8f0" }}>Comments</h2>
               {step.comments.map((c, i) => (
-                <div key={i} style={{ borderLeft: "3px solid #e5e7eb", paddingLeft: "1rem", marginBottom: "1rem" }}>
-                  <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>{c.user} · {c.timestamp}</div>
-                  <div>{c.comment}</div>
+                <div key={i} style={{ borderLeft: "3px solid rgba(0,212,255,0.3)", paddingLeft: "1rem", marginBottom: "1rem" }}>
+                  <div style={{ fontSize: "0.8rem", color: "#4a7a9b" }}>{c.user} · {c.timestamp}</div>
+                  <div style={{ color: "#dce8f5" }}>{c.comment}</div>
                 </div>
               ))}
             </section>
@@ -190,25 +202,27 @@ function WorkflowReviewContent() {
 
         <div>
           {canAct && (
-            <div style={{ background: "#fff", borderRadius: 12, padding: "1.5rem", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
-              <h3 style={{ marginTop: 0 }}>Take Action</h3>
-              <button type="button" onClick={handleApprove} disabled={actionBusy} style={{ width: "100%", background: "#16a34a", color: "white", padding: "0.75rem", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", marginBottom: "0.5rem" }}>
-                ✓ Approve This Step
+            <div style={card}>
+              <h3 style={{ marginTop: 0, color: "#e2e8f0" }}>Take Action</h3>
+              <button type="button" onClick={handleApprove} disabled={actionBusy}
+                style={{ width: "100%", background: "rgba(0,229,160,0.15)", color: "#00e5a0", border: "1px solid rgba(0,229,160,0.4)", padding: "0.75rem", borderRadius: 6, fontWeight: 700, cursor: "pointer", marginBottom: "0.5rem", fontSize: "0.9rem" }}>
+                ✓ Approve
               </button>
-              <button type="button" onClick={handleReject} disabled={actionBusy} style={{ width: "100%", background: "#dc2626", color: "white", padding: "0.75rem", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer" }}>
-                ✗ Reject This Step
+              <button type="button" onClick={handleReject} disabled={actionBusy}
+                style={{ width: "100%", background: "rgba(255,69,96,0.1)", color: "#ff4560", border: "1px solid rgba(255,69,96,0.35)", padding: "0.75rem", borderRadius: 6, fontWeight: 700, cursor: "pointer", fontSize: "0.9rem" }}>
+                ✗ Reject
               </button>
             </div>
           )}
-          <div style={{ background: "#fff", borderRadius: 12, padding: "1.5rem", marginTop: "1rem", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
-            <h3 style={{ marginTop: 0 }}>Workflow Context</h3>
-            <dl style={{ fontSize: "0.875rem" }}>
-              <dt style={{ fontWeight: 600, color: "#6b7280", marginTop: "0.5rem" }}>Workflow ID:</dt>
-              <dd style={{ margin: "0 0 0.5rem 0", fontFamily: "monospace", fontSize: "0.75rem" }}>{data.workflow_id}</dd>
-              <dt style={{ fontWeight: 600, color: "#6b7280", marginTop: "0.5rem" }}>Step ID:</dt>
-              <dd style={{ margin: "0 0 0.5rem 0", fontFamily: "monospace", fontSize: "0.75rem" }}>{step.step_id}</dd>
-              <dt style={{ fontWeight: 600, color: "#6b7280", marginTop: "0.5rem" }}>Context ID:</dt>
-              <dd style={{ margin: "0 0 0.5rem 0", fontFamily: "monospace", fontSize: "0.75rem" }}>{step.context_id}</dd>
+          <div style={{ ...card, marginTop: canAct ? 0 : 0 }}>
+            <h3 style={{ marginTop: 0, color: "#e2e8f0", fontSize: "0.95rem" }}>Workflow Context</h3>
+            <dl style={{ fontSize: "0.8rem" }}>
+              <dt style={{ ...label, marginTop: "0.5rem" }}>Workflow ID</dt>
+              <dd style={{ margin: "0.1rem 0 0.5rem 0", fontFamily: "monospace", color: "#7da0c0", wordBreak: "break-all" }}>{data.workflow_id}</dd>
+              <dt style={{ ...label, marginTop: "0.5rem" }}>Step ID</dt>
+              <dd style={{ margin: "0.1rem 0 0.5rem 0", fontFamily: "monospace", color: "#7da0c0", wordBreak: "break-all" }}>{step.step_id}</dd>
+              <dt style={{ ...label, marginTop: "0.5rem" }}>Context ID</dt>
+              <dd style={{ margin: "0.1rem 0 0", fontFamily: "monospace", color: "#7da0c0", wordBreak: "break-all" }}>{step.context_id}</dd>
             </dl>
           </div>
         </div>
