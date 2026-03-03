@@ -141,6 +141,12 @@ async function handleGeneralUpdate(
     }
   }
 
+  const rawApprovalMode = asNonEmptyString(body["approval_mode"]);
+  const validApprovalModes = ["auto", "require-human", "manual"];
+  const approvalMode = rawApprovalMode && validApprovalModes.includes(rawApprovalMode)
+    ? rawApprovalMode
+    : undefined;
+
   await db
     .update(tenants)
     .set({
@@ -148,6 +154,7 @@ async function handleGeneralUpdate(
       virtualHost: virtualHost ?? null,
       enableAxeSignals: asBooleanFlag(body["enable_axe_signals"]),
       humanReviewRequired: asBooleanFlag(body["human_review_required"]),
+      ...(approvalMode !== undefined ? { approvalMode } : {}),
       updatedAt: new Date(),
     })
     .where(eq(tenants.tenantId, tenantId));
@@ -177,6 +184,7 @@ const generalSettingsRoute: FastifyPluginAsync = async (fastify: FastifyInstance
         virtual_host: tenants.virtualHost,
         enable_axe_signals: tenants.enableAxeSignals,
         human_review_required: tenants.humanReviewRequired,
+        approval_mode: tenants.approvalMode,
       })
       .from(tenants)
       .where(eq(tenants.tenantId, id))

@@ -18,6 +18,7 @@ export interface CreateWorkflowStepParams {
   toolName: string;
   requestData: Record<string, unknown>;
   owner?: string;
+  status?: string;
 }
 
 /**
@@ -34,7 +35,7 @@ export async function createWorkflowStep(
     stepType: params.stepType,
     toolName: params.toolName,
     requestData: params.requestData,
-    status: "in_progress",
+    status: params.status ?? "in_progress",
     owner: params.owner ?? "system",
   });
   return { stepId };

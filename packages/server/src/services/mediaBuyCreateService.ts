@@ -10,6 +10,7 @@ import { db } from "../db/client.js";
 import { creatives } from "../db/schema/creatives.js";
 import { currencyLimits } from "../db/schema/currencyLimits.js";
 import { products } from "../db/schema/products.js";
+import { tenants } from "../db/schema/tenants.js";
 import type {
   CreateMediaBuyRequest,
   PackageRequest,
@@ -343,14 +344,25 @@ export async function createMediaBuy(
     ]);
   }
 
+  // Check tenant approval mode — "require-human" / "manual" means a workflow step is created
+  // and the campaign waits for admin approval before the adapter is called.
+  const [tenantRow] = await db
+    .select({ approvalMode: tenants.approvalMode })
+    .from(tenants)
+    .where(eq(tenants.tenantId, ctx.tenantId))
+    .limit(1);
+  const requiresHumanApproval =
+    tenantRow?.approvalMode === "require-human" || tenantRow?.approvalMode === "manual";
+
   // Create the workflow step BEFORE DB lookups so it can be updated to "failed" if they fail.
   // Parity with Python L1296-1303 (step created before product/currency validation).
   const contextId = `default_${ctx.tenantId}_${ctx.principalId}`;
   const { stepId } = await createWorkflowStep({
     contextId,
-    stepType: "media_buy_creation",
+    stepType: requiresHumanApproval ? "create_media_buy" : "media_buy_creation",
     toolName: "create_media_buy",
     requestData: parsed as unknown as Record<string, unknown>,
+    status: requiresHumanApproval ? "requires_approval" : undefined,
   });
 
   try {
@@ -386,6 +398,19 @@ export async function createMediaBuy(
       const errorMsg = currencyError.errors[0] ?? "Currency validation failed.";
       await updateWorkflowStep(stepId, { status: "failed", errorMessage: errorMsg });
       return currencyError;
+    }
+
+    // When human approval is required, skip the adapter call — the campaign waits
+    // in the Workflows queue for admin review via the Workflows UI.
+    if (requiresHumanApproval) {
+      const success: CreateMediaBuySuccess = {
+        media_buy_id: `pending_${stepId}`,
+        buyer_ref: parsed.buyer_ref ?? null,
+        packages: [],
+        workflow_step_id: stepId,
+        message: "Campaign submitted for human approval. Review it in the Workflows page.",
+      } as unknown as CreateMediaBuySuccess;
+      return success;
     }
 
     const adapterResponse = await createMediaBuyViaAdapter({ ...ctx, stepId }, parsed);

@@ -75,18 +75,21 @@ function GeneralTab({
   onSaved: () => void;
 }) {
   const [name, setName] = useState(String(initial.name ?? ""));
+  const [approvalMode, setApprovalMode] = useState(String(initial.approval_mode ?? "require-human"));
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
+    setSaved(false);
     try {
       const res = await fetch(`/tenant/${tenantId}/settings/general`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), approval_mode: approvalMode }),
       });
-      if (res.ok) await onSaved();
+      if (res.ok) { setSaved(true); await onSaved(); }
       else window.alert("Failed to save");
     } finally {
       setBusy(false);
@@ -97,6 +100,18 @@ function GeneralTab({
       <div style={{ marginBottom: "0.75rem" }}>
         <label>Tenant name <input type="text" value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} /></label>
       </div>
+      <div style={{ marginBottom: "0.75rem" }}>
+        <label style={{ display: "block", marginBottom: "0.25rem", fontWeight: 600 }}>Campaign Approval Mode</label>
+        <select value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)} style={{ width: "100%" }}>
+          <option value="auto">Auto — campaigns activate immediately (no human review)</option>
+          <option value="require-human">Require Human — every campaign needs manual approval</option>
+          <option value="manual">Manual — same as require-human</option>
+        </select>
+        <small style={{ color: "#666", marginTop: "0.25rem", display: "block" }}>
+          With <strong>Require Human</strong>, campaigns created by Claude appear in the Workflows queue for your approval before going live.
+        </small>
+      </div>
+      {saved && <p style={{ color: "green", margin: "0.5rem 0" }}>Saved!</p>}
       <button type="submit" disabled={busy}>Save general</button>
     </form>
   );
