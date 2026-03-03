@@ -258,7 +258,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   await fastify.register(activityRestRoute);
   await fastify.register(activitySseRoute);
   await fastify.register(processLogsRoute);
-  await fastify.register(formatSearchRoute);
+  await fastify.register(formatSearchRoute, { prefix: "/api/formats" });
   await fastify.register(publisherPartnersRoute);
   // Tenant management API — prefix mirrors legacy Blueprint url_prefix="/api/v1/tenant-management"
   await fastify.register(tenantManagementApiRoute, { prefix: "/api/v1/tenant-management" });
