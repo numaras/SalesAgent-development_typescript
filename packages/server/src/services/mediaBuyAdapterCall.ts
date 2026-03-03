@@ -47,6 +47,31 @@ interface AdapterCreateResponse {
   packages?: AdapterCreatePackage[];
 }
 
+/**
+ * Extract a human-readable message from a GAM API error object.
+ * GAM errors are often plain objects like { errors: [{reason, fieldPath}] }
+ * rather than Error instances.
+ */
+function extractGamErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    // GAM SOAP/REST error envelope
+    if (Array.isArray(e["errors"]) && e["errors"].length > 0) {
+      const first = e["errors"][0] as Record<string, unknown>;
+      const reason = first["reason"] ?? first["errorString"] ?? first["trigger"];
+      const field = first["fieldPath"] ? ` (field: ${first["fieldPath"]})` : "";
+      return `${reason ?? "Unknown GAM error"}${field}`;
+    }
+    if (typeof e["message"] === "string") return e["message"];
+    if (typeof e["reason"] === "string") return e["reason"];
+    if (typeof e["faultstring"] === "string") return e["faultstring"];
+    // Last resort: proper JSON serialization instead of [object Object]
+    try { return JSON.stringify(e); } catch { /* ignore */ }
+  }
+  return String(err);
+}
+
 interface InvokeCreateAdapterOptions {
   allowMockFallback?: boolean;
 }
@@ -199,13 +224,11 @@ async function invokeCreateAdapter(
         })),
       };
     } catch (gamErr) {
+      const gamErrMsg = extractGamErrorMessage(gamErr);
       if (!allowMockFallback) {
-        throw new Error(
-          `GAM createOrders failed: ${gamErr instanceof Error ? gamErr.message : String(gamErr)}`,
-        );
+        throw new Error(`GAM createOrders failed: ${gamErrMsg}`);
       }
-      // GAM call failed — fall through to mock response with error logged
-      console.error(`[mediaBuyAdapterCall] GAM createOrders failed: ${gamErr instanceof Error ? gamErr.message : String(gamErr)}. Falling back to mock.`);
+      console.error(`[mediaBuyAdapterCall] GAM createOrders failed: ${gamErrMsg}. Falling back to mock.`);
     }
   }
 
