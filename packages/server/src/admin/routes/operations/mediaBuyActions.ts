@@ -338,6 +338,32 @@ const mediaBuyActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance
 
     return reply.send({ success: true, message: `Campaign activated (${newStatus}).`, status: newStatus });
   });
+
+  // Delete a media buy — only allowed for non-live statuses.
+  fastify.delete("/tenant/:id/media-buy/:mbId", async (request, reply) => {
+    const { id, mbId } = request.params as { id: string; mbId: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
+    request.auditOperation = "delete_media_buy";
+
+    const [mediaBuy] = await db
+      .select({ status: mediaBuys.status })
+      .from(mediaBuys)
+      .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.mediaBuyId, mbId)))
+      .limit(1);
+
+    if (!mediaBuy) return reply.code(404).send({ error: "Media buy not found" });
+
+    const deletableStatuses = ["failed", "draft", "rejected", "pending_approval", "scheduled", "completed"];
+    if (!deletableStatuses.includes(mediaBuy.status)) {
+      return reply.code(400).send({
+        error: `Cannot delete a campaign with status '${mediaBuy.status}'. Only non-live campaigns can be deleted.`,
+      });
+    }
+
+    await db.delete(mediaBuys).where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.mediaBuyId, mbId)));
+
+    return reply.send({ success: true, message: "Campaign deleted." });
+  });
 };
 
 export default mediaBuyActionsRoute;

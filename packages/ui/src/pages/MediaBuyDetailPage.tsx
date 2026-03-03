@@ -9,6 +9,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import DeleteIcon from "@mui/icons-material/Delete";
 import { BaseLayout } from "../components/BaseLayout";
 import { PrivateRoute } from "../components/PrivateRoute";
 
@@ -149,6 +150,7 @@ function MediaBuyDetailContent() {
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [activating, setActivating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -170,6 +172,29 @@ function MediaBuyDetailContent() {
   }, [id, mbId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const handleDelete = async () => {
+    if (!id || !mbId) return;
+    if (!window.confirm("Delete this campaign permanently? This cannot be undone.")) return;
+    setDeleting(true);
+    setActionMsg(null);
+    try {
+      const res = await fetch(`/tenant/${id}/media-buy/${encodeURIComponent(mbId)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const json = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; message?: string };
+      if (json.success) {
+        window.location.href = `/tenant/${id}`;
+      } else {
+        setActionMsg({ type: "error", text: json.message ?? json.error ?? "Delete failed." });
+      }
+    } catch (e) {
+      setActionMsg({ type: "error", text: e instanceof Error ? e.message : "Request failed" });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleActivate = async () => {
     if (!id || !mbId) return;
@@ -384,6 +409,23 @@ function MediaBuyDetailContent() {
           )}
         </Box>
       </Box>
+
+      {/* Delete for non-live campaigns */}
+      {["failed", "draft", "rejected", "pending_approval", "scheduled", "completed"].includes(mb.status) && (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
+          <Button
+            variant="outlined"
+            color="error"
+            size="small"
+            startIcon={<DeleteIcon />}
+            disabled={deleting}
+            onClick={handleDelete}
+            sx={{ opacity: 0.7, "&:hover": { opacity: 1 } }}
+          >
+            {deleting ? "Deleting…" : "Delete Campaign"}
+          </Button>
+        </Box>
+      )}
 
       {/* Packages */}
       {packages.length > 0 && (
