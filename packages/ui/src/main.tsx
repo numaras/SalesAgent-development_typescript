@@ -24,6 +24,7 @@ import GamConfigPage from "./pages/GamConfigPage";
 import GamReportingPage from "./pages/GamReportingPage";
 import SignupPage from "./pages/SignupPage";
 import CreativeAgentsPage from "./pages/CreativeAgentsPage";
+import CreativesAddPage from "./pages/CreativesAddPage";
 import MediaBuyDetailPage from "./pages/MediaBuyDetailPage";
 
 const cockpitTheme = createTheme({
@@ -286,6 +287,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/tenant/:id/products" element={<ProductsListPage />} />
         <Route path="/tenant/:id/products/add" element={<ProductAddPage />} />
         <Route path="/tenant/:id/products/:productId/edit" element={<ProductEditPage />} />
+        <Route path="/tenant/:id/creatives/add" element={<CreativesAddPage />} />
         <Route path="/tenant/:id/creatives/review" element={<CreativesReviewPage />} />
         <Route path="/tenant/:id/creatives/list" element={<CreativesListPage />} />
         <Route path="/tenant/:id/workflows" element={<WorkflowsListPage />} />

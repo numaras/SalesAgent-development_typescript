@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { BaseLayout } from "../components/BaseLayout";
 import { PrivateRoute } from "../components/PrivateRoute";
 
@@ -82,7 +82,12 @@ function CreativesListContent() {
 
   return (
     <BaseLayout tenantId={id} tenantName={tenantName}>
-      <h1 style={{ fontFamily: "system-ui" }}>Creatives</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem", flexWrap: "wrap", gap: "0.75rem" }}>
+        <h1 style={{ fontFamily: "system-ui", margin: 0 }}>Creatives</h1>
+        <Link to={`/tenant/${id}/creatives/add`} style={{ background: "rgba(0,212,255,0.12)", color: "#00d4ff", border: "1px solid rgba(0,212,255,0.3)", borderRadius: 6, padding: "0.4rem 1rem", fontWeight: 600, fontSize: "0.875rem", textDecoration: "none" }}>
+          + Upload Creative
+        </Link>
+      </div>
       <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
         <input
           type="text"

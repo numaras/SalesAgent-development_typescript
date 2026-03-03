@@ -92,6 +92,7 @@ import propertyActionsRoute from "./properties/propertyActions.js";
 import propertyTagsRoute from "./properties/propertyTags.js";
 
 // Creatives
+import addCreativeRoute from "./creatives/addCreative.js";
 import analyzeCreativeRoute from "./creatives/analyzeCreative.js";
 import creativePagesRoute from "./creatives/creativePages.js";
 import reviewActionsRoute from "./creatives/reviewActions.js";
@@ -226,6 +227,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   await fastify.register(propertyTagsRoute);
 
   // Creatives
+  await fastify.register(addCreativeRoute);
   await fastify.register(analyzeCreativeRoute);
   await fastify.register(creativePagesRoute);
   await fastify.register(reviewActionsRoute);
