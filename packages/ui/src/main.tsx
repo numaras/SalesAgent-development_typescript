@@ -26,6 +26,7 @@ import SignupPage from "./pages/SignupPage";
 import CreativeAgentsPage from "./pages/CreativeAgentsPage";
 import CreativesAddPage from "./pages/CreativesAddPage";
 import MediaBuyDetailPage from "./pages/MediaBuyDetailPage";
+import MediaBuysListPage from "./pages/MediaBuysListPage";
 
 const cockpitTheme = createTheme({
   palette: {
@@ -310,6 +311,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/tenant/:id/settings" element={<TenantSettingsPage />} />
         <Route path="/tenant/:id/gam/config" element={<GamConfigPage />} />
         <Route path="/tenant/:id/gam/reporting" element={<GamReportingPage />} />
+        <Route path="/tenant/:id/media-buys" element={<MediaBuysListPage />} />
         <Route path="/tenant/:id/media-buy/:mbId" element={<MediaBuyDetailPage />} />
         <Route path="*" element={<NotFound />} />
         </Routes>

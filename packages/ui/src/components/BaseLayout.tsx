@@ -8,6 +8,7 @@ import {
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import DashboardIcon from "@mui/icons-material/Dashboard";
+import CampaignIcon from "@mui/icons-material/Campaign";
 import ShoppingCartIcon from "@mui/icons-material/ShoppingCart";
 import PaletteIcon from "@mui/icons-material/Palette";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
@@ -55,6 +56,7 @@ export function BaseLayout({ children, tenantId, tenantName, faviconUrl }: BaseL
   const navItems: NavItem[] = id
     ? [
         { label: "Dashboard",          icon: <DashboardIcon />,      to: prefixed(`/tenant/${id}`),                          match: `/tenant/${id}`, exact: true },
+        { label: "Campaigns",          icon: <CampaignIcon />,       to: prefixed(`/tenant/${id}/media-buys`),               match: `/tenant/${id}/media-bu` },
         { label: "Products",           icon: <ShoppingCartIcon />,   to: prefixed(`/tenant/${id}/products`),                 match: `/tenant/${id}/products` },
         { label: "Creatives",          icon: <PaletteIcon />,        to: prefixed(`/tenant/${id}/creatives/list`),            match: `/tenant/${id}/creatives` },
         { label: "Workflows",          icon: <AccountTreeIcon />,    to: prefixed(`/tenant/${id}/workflows`),                 match: `/tenant/${id}/workflows` },
