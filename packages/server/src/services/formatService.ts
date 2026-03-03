@@ -75,7 +75,9 @@ async function callAgentMcpTool(
   timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   const base = agentUrl.endsWith("/") ? agentUrl.slice(0, -1) : agentUrl;
-  const mcpUrl = base.endsWith("/mcp") ? `${base}/` : `${base}/mcp/`;
+  // No trailing slash — the creative agent redirects /mcp/ → http://.../mcp
+  // which Node.js fetch won't follow correctly for POST requests.
+  const mcpUrl = base.endsWith("/mcp") ? base : `${base}/mcp`;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

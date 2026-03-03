@@ -87,7 +87,7 @@ async function callAgentMcpTool(
   }
 
   const base = agentUrl.endsWith("/") ? agentUrl.slice(0, -1) : agentUrl;
-  const mcpUrl = base.endsWith("/mcp") ? base + "/" : base + "/mcp/";
+  const mcpUrl = base.endsWith("/mcp") ? base : base + "/mcp";
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
