@@ -102,6 +102,7 @@ function PrincipalsContent() {
               <tr style={{ borderBottom: "1px solid #eee" }}>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Name</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Principal ID</th>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>Access Token (MCP)</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Media buys</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Created</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Actions</th>
@@ -112,6 +113,18 @@ function PrincipalsContent() {
                 <tr key={p.principal_id} style={{ borderBottom: "1px solid #eee" }}>
                   <td style={{ padding: "0.5rem" }}>{p.name}</td>
                   <td style={{ padding: "0.5rem", fontFamily: "monospace", fontSize: "0.875rem" }}>{p.principal_id}</td>
+                  <td style={{ padding: "0.5rem" }}>
+                    <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: "#555" }}>
+                      {p.access_token.slice(0, 8)}…
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(p.access_token).then(() => window.alert("Access token copied!"))}
+                      style={{ marginLeft: "0.5rem", fontSize: "0.75rem", cursor: "pointer", padding: "0.1rem 0.4rem", border: "1px solid #ccc", borderRadius: 3, background: "#f5f5f5" }}
+                    >
+                      Copy
+                    </button>
+                  </td>
                   <td style={{ padding: "0.5rem" }}>{p.media_buy_count}</td>
                   <td style={{ padding: "0.5rem" }}>{p.created_at ? new Date(p.created_at).toLocaleDateString() : "—"}</td>
                   <td style={{ padding: "0.5rem" }}>
