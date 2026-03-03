@@ -25,14 +25,10 @@ export default defineConfig({
   base: scriptRoot ? (scriptRoot.endsWith("/") ? scriptRoot : `${scriptRoot}/`) : "/",
   server: {
     port: 5173,
-    // Allow Cloudflare Tunnel and any other reverse-proxy hosts.
-    // VITE_ALLOWED_HOSTS accepts a comma-separated list (e.g. "abc.trycloudflare.com,myapp.example.com").
-    // Set to "all" to allow every host (convenient but less strict).
-    allowedHosts: process.env["VITE_ALLOWED_HOSTS"]
-      ? process.env["VITE_ALLOWED_HOSTS"] === "all"
-        ? true
-        : process.env["VITE_ALLOWED_HOSTS"].split(",").map((h) => h.trim())
-      : ["adcpts.nicksworld.cc"],
+    // Allow all hosts — required for Cloudflare Tunnel (adcpts.nicksworld.cc)
+    // and any other reverse-proxy. Vite's host check is a dev-only DNS-rebinding
+    // guard; Cloudflare Tunnel provides the actual external security boundary.
+    allowedHosts: true,
     proxy: {
       // WebSocket
       "/ws": { target: apiOrigin, ws: true, changeOrigin: true },
