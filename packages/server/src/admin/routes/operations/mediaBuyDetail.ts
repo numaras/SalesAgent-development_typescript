@@ -114,13 +114,13 @@ const mediaBuyDetailRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
     const assignmentRows = (await db.execute(
       sql`
         SELECT
-          ca.assignment_id,
+          ca.id       AS assignment_id,
           ca.package_id,
           ca.creative_id,
-          ca.weight,
-          cr.name   AS creative_name,
-          cr.format AS creative_format,
-          cr.status AS creative_status
+          1           AS weight,
+          cr.name     AS creative_name,
+          cr.format   AS creative_format,
+          cr.status   AS creative_status
         FROM creative_assignments ca
         JOIN creatives cr ON ca.creative_id = cr.creative_id
         WHERE ca.media_buy_id = ${mbId}
