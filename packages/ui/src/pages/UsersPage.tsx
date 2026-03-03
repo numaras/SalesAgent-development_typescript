@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import {
+  Alert, Box, Button, Card, CardContent, Chip, Divider,
+  FormControl, InputLabel, MenuItem, Select, Stack,
+  TextField, Typography,
+} from "@mui/material";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import ErrorIcon from "@mui/icons-material/Error";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { BaseLayout } from "../components/BaseLayout";
 import { PrivateRoute } from "../components/PrivateRoute";
 
@@ -20,6 +28,246 @@ interface UsersResponse {
   authorized_domains: string[];
   auth_setup_mode: boolean;
   oidc_enabled: boolean;
+}
+
+// ── SSO / OIDC Configuration Panel ──────────────────────────────────────────
+
+const PROVIDER_DISCOVERY: Record<string, string> = {
+  google: "https://accounts.google.com/.well-known/openid-configuration",
+  microsoft: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
+};
+
+interface OidcConfig {
+  provider?: string;
+  discovery_url: string | null;
+  client_id: string | null;
+  has_client_secret: boolean;
+  scopes: string;
+  logout_url: string | null;
+  oidc_enabled: boolean;
+  oidc_configured: boolean;
+  oidc_valid: boolean;
+  oidc_verified: boolean;
+  oidc_verified_at: string | null;
+  redirect_uri: string | null;
+  redirect_uri_changed: boolean;
+}
+
+function SsoConfigSection({ tenantId }: { tenantId: string }) {
+  const [config, setConfig] = useState<OidcConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Form state
+  const [provider, setProvider] = useState("custom");
+  const [discoveryUrl, setDiscoveryUrl] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [scopes, setScopes] = useState("openid email profile");
+  const [logoutUrl, setLogoutUrl] = useState("");
+
+  const loadConfig = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/auth/oidc/tenant/${tenantId}/config`, { credentials: "include" });
+      if (!res.ok) return;
+      const data = (await res.json()) as OidcConfig;
+      setConfig(data);
+      setProvider(data.provider ?? "custom");
+      setDiscoveryUrl(data.discovery_url ?? "");
+      setClientId(data.client_id ?? "");
+      setScopes(data.scopes ?? "openid email profile");
+      setLogoutUrl(data.logout_url ?? "");
+    } finally {
+      setLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => { void loadConfig(); }, [loadConfig]);
+
+  // Auto-fill discovery URL when switching provider
+  const handleProviderChange = (p: string) => {
+    setProvider(p);
+    if (PROVIDER_DISCOVERY[p]) setDiscoveryUrl(PROVIDER_DISCOVERY[p]);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setMsg(null);
+    try {
+      const body: Record<string, unknown> = { provider, client_id: clientId, scopes };
+      if (discoveryUrl.trim()) body.discovery_url = discoveryUrl.trim();
+      if (clientSecret.trim()) body.client_secret = clientSecret.trim();
+      if (logoutUrl.trim()) body.logout_url = logoutUrl.trim();
+
+      const res = await fetch(`/auth/oidc/tenant/${tenantId}/config`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json().catch(() => ({}))) as { success?: boolean; message?: string; error?: string; config?: OidcConfig };
+      if (json.success) {
+        setMsg({ type: "success", text: json.message ?? "Saved." });
+        if (json.config) setConfig(json.config);
+        setClientSecret("");
+      } else {
+        setMsg({ type: "error", text: json.error ?? "Save failed." });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggle = async (enable: boolean) => {
+    setMsg(null);
+    const path = enable ? "enable" : "disable";
+    const res = await fetch(`/auth/oidc/tenant/${tenantId}/${path}`, {
+      method: "POST", credentials: "include",
+    });
+    const json = (await res.json().catch(() => ({}))) as { success?: boolean; message?: string; error?: string };
+    if (json.success) {
+      setMsg({ type: "success", text: json.message ?? `SSO ${enable ? "enabled" : "disabled"}.` });
+      await loadConfig();
+    } else {
+      setMsg({ type: "error", text: json.error ?? "Action failed." });
+    }
+  };
+
+  if (loading) return <Typography variant="body2" color="text.secondary">Loading SSO config…</Typography>;
+
+  return (
+    <Card>
+      <CardContent>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2}>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>SSO / OIDC Configuration</Typography>
+          {config && (
+            <Stack direction="row" gap={1}>
+              {config.oidc_configured && (
+                <Chip
+                  icon={config.oidc_verified ? <CheckCircleIcon /> : <ErrorIcon />}
+                  label={config.oidc_verified ? "Verified" : "Not verified"}
+                  color={config.oidc_verified ? "success" : "warning"}
+                  size="small"
+                />
+              )}
+              <Chip
+                label={config.oidc_enabled ? "Enabled" : "Disabled"}
+                color={config.oidc_enabled ? "success" : "default"}
+                size="small"
+              />
+            </Stack>
+          )}
+        </Stack>
+
+        {/* Redirect URI info */}
+        {config?.redirect_uri && (
+          <Box sx={{ p: 1.5, mb: 2, background: "rgba(0,212,255,0.05)", borderRadius: 1, border: "1px solid rgba(0,212,255,0.15)" }}>
+            <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 0.5 }}>
+              Callback URL — add this to your IdP:
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: "monospace", color: "primary.main", wordBreak: "break-all" }}>
+              {config.redirect_uri}
+            </Typography>
+            {config.redirect_uri_changed && (
+              <Typography variant="caption" color="warning.main">
+                ⚠ Redirect URI changed since last verification — re-test before enabling.
+              </Typography>
+            )}
+          </Box>
+        )}
+
+        {msg && (
+          <Alert severity={msg.type} onClose={() => setMsg(null)} sx={{ mb: 2 }}>
+            {msg.text}
+          </Alert>
+        )}
+
+        <form onSubmit={(e) => { void handleSave(e); }}>
+          <Stack gap={2}>
+            <FormControl size="small" fullWidth>
+              <InputLabel>Provider</InputLabel>
+              <Select value={provider} label="Provider" onChange={(e) => handleProviderChange(e.target.value)}>
+                <MenuItem value="google">Google</MenuItem>
+                <MenuItem value="microsoft">Microsoft / Azure AD</MenuItem>
+                <MenuItem value="custom">Custom (Okta, Auth0, Keycloak…)</MenuItem>
+              </Select>
+            </FormControl>
+
+            <TextField
+              label="Discovery URL"
+              size="small"
+              fullWidth
+              value={discoveryUrl}
+              onChange={(e) => setDiscoveryUrl(e.target.value)}
+              placeholder="https://…/.well-known/openid-configuration"
+              helperText="Auto-filled for Google and Microsoft. Required for custom providers."
+              required={provider === "custom"}
+            />
+
+            <TextField label="Client ID" size="small" fullWidth required value={clientId} onChange={(e) => setClientId(e.target.value)} />
+
+            <TextField
+              label={config?.has_client_secret ? "Client Secret (leave blank to keep existing)" : "Client Secret"}
+              size="small" fullWidth type="password"
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              required={!config?.has_client_secret}
+              helperText={config?.has_client_secret ? "A secret is already stored. Enter a new one to rotate it." : undefined}
+            />
+
+            <TextField label="Scopes" size="small" fullWidth value={scopes} onChange={(e) => setScopes(e.target.value)} />
+
+            <TextField
+              label="Logout URL (optional)"
+              size="small" fullWidth
+              value={logoutUrl}
+              onChange={(e) => setLogoutUrl(e.target.value)}
+              helperText="Auto-filled for Google/Microsoft if left empty."
+            />
+
+            <Stack direction="row" gap={1} flexWrap="wrap">
+              <Button type="submit" variant="contained" disabled={saving}>
+                {saving ? "Saving…" : "Save configuration"}
+              </Button>
+
+              {config?.oidc_configured && (
+                <Button
+                  variant="outlined"
+                  endIcon={<OpenInNewIcon />}
+                  onClick={() => window.open(`/auth/oidc/test/${tenantId}`, "_blank")}
+                >
+                  Test SSO login
+                </Button>
+              )}
+
+              {config?.oidc_verified && !config.oidc_enabled && (
+                <Button variant="contained" color="success" onClick={() => { void handleToggle(true); }}>
+                  Enable SSO
+                </Button>
+              )}
+
+              {config?.oidc_enabled && (
+                <Button variant="outlined" color="error" onClick={() => { void handleToggle(false); }}>
+                  Disable SSO
+                </Button>
+              )}
+            </Stack>
+          </Stack>
+        </form>
+
+        {config?.oidc_verified_at && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="caption" color="text.secondary">
+              Last verified: {new Date(config.oidc_verified_at).toLocaleString()}
+            </Typography>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 /**
@@ -201,8 +449,7 @@ function UsersContent() {
       </section>
 
       <section style={{ marginBottom: "1.5rem" }}>
-        <h2 style={{ fontSize: "1rem" }}>OIDC config</h2>
-        <p style={{ color: "#666" }}>Configure SSO at <code>/auth/oidc/tenant/{id}/config</code> (GET/POST). OIDC enabled: {data.oidc_enabled ? "Yes" : "No"}</p>
+        <SsoConfigSection tenantId={id} />
       </section>
 
       <section style={{ marginBottom: "1.5rem" }}>
