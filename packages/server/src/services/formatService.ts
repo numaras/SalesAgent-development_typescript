@@ -122,7 +122,19 @@ async function callAgentMcpTool(
 
   if (!toolRes.ok) throw new Error(`MCP tool call failed (HTTP ${toolRes.status})`);
 
-  const rpc = (await toolRes.json()) as Record<string, unknown>;
+  // The agent responds with SSE format (text/event-stream) even for single-shot calls.
+  // Parse the body text and extract the JSON from the first `data:` line.
+  const bodyText = await toolRes.text();
+  let rpc: Record<string, unknown>;
+  const contentType = toolRes.headers.get("content-type") ?? "";
+  if (contentType.includes("text/event-stream") || bodyText.startsWith("event:") || bodyText.startsWith("data:")) {
+    const dataLine = bodyText.split("\n").find((l) => l.startsWith("data:"));
+    if (!dataLine) throw new Error("MCP SSE response had no data line");
+    rpc = JSON.parse(dataLine.slice("data:".length).trim()) as Record<string, unknown>;
+  } else {
+    rpc = JSON.parse(bodyText) as Record<string, unknown>;
+  }
+
   if (rpc["error"]) {
     const err = rpc["error"] as Record<string, unknown>;
     throw new Error(String(err["message"] ?? "MCP error"));
