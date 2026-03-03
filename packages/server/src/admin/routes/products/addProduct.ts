@@ -201,7 +201,8 @@ const addProductRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => 
 
     // For mock adapter with no formats supplied, default to a standard display banner.
     if (formatRefs.length === 0) {
-      if (adapterType === "mock" || adapterType === "mock_ad_server") {
+      const tenantAdServer = tenant.adServer ?? "mock";
+      if (tenantAdServer === "mock" || tenantAdServer === "mock_ad_server") {
         formatRefs.push({
           agent_url: "https://creative.adcontextprotocol.org",
           id: "display_300x250",
