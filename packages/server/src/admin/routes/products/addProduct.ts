@@ -199,8 +199,16 @@ const addProductRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => 
       return fmt;
     }).filter((entry): entry is Record<string, unknown> & { agent_url: string; id: string } => Boolean(entry));
 
+    // For mock adapter with no formats supplied, default to a standard display banner.
     if (formatRefs.length === 0) {
-      return reply.code(400).send({ error: "At least one format is required" });
+      if (adapterType === "mock" || adapterType === "mock_ad_server") {
+        formatRefs.push({
+          agent_url: "https://creative.adcontextprotocol.org",
+          id: "display_300x250",
+        });
+      } else {
+        return reply.code(400).send({ error: "At least one format is required" });
+      }
     }
 
     // Validate default-agent format IDs when format lookup is available.
