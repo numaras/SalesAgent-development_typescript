@@ -20,6 +20,7 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import TuneIcon from "@mui/icons-material/Tune";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import RadioButtonCheckedIcon from "@mui/icons-material/RadioButtonChecked";
+import MemoryIcon from "@mui/icons-material/Memory";
 
 const DRAWER_WIDTH = 220;
 const DRAWER_COLLAPSED = 56;
@@ -60,6 +61,7 @@ export function BaseLayout({ children, tenantId, tenantName, faviconUrl }: BaseL
         { label: "Properties",         icon: <DomainIcon />,         to: prefixed(`/tenant/${id}/authorized-properties`),     match: `/tenant/${id}/authorized-properties` },
         { label: "Inventory",          icon: <LayersIcon />,         to: prefixed(`/tenant/${id}/inventory-profiles`),        match: `/tenant/${id}/inventory-profiles` },
         { label: "Principals",         icon: <PeopleIcon />,         to: prefixed(`/tenant/${id}/principals`),                match: `/tenant/${id}/principals` },
+        { label: "Creative Agents",    icon: <MemoryIcon />,         to: prefixed(`/tenant/${id}/creative-agents`),            match: `/tenant/${id}/creative-agents` },
         { label: "Users",              icon: <ManageAccountsIcon />, to: prefixed(`/tenant/${id}/users`),                     match: `/tenant/${id}/users` },
         { label: "GAM Config",         icon: <TuneIcon />,           to: prefixed(`/tenant/${id}/gam/config`),                match: `/tenant/${id}/gam/config` },
         { label: "Settings",           icon: <SettingsIcon />,       to: prefixed(`/tenant/${id}/settings`),                  match: `/tenant/${id}/settings` },

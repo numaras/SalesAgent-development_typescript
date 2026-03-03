@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { db } from "../../../db/client.js";
 import { adapterConfigs } from "../../../db/schema/adapterConfigs.js";
 import { tenants } from "../../../db/schema/tenants.js";
-import { buildGamClient } from "../../../gam/gamClient.js";
+import { fetchGamAdvertisers } from "../../../services/gamAdvertiserService.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
 
 /**
@@ -42,61 +42,22 @@ const principalGamApiRoute: FastifyPluginAsync = async (fastify: FastifyInstance
 
     const body = (request.body ?? {}) as Record<string, unknown>;
     const search = typeof body.search === "string" ? body.search : undefined;
-    const limit = typeof body.limit === "number" ? Math.min(500, Math.max(1, body.limit)) : 500;
+    const limit =
+      typeof body.limit === "number"
+        ? body.limit
+        : typeof body.limit === "string"
+          ? Number(body.limit)
+          : undefined;
     const fetchAll = body.fetch_all === true;
 
     try {
-      const [adapterRow] = await db
-        .select()
-        .from(adapterConfigs)
-        .where(eq(adapterConfigs.tenantId, id))
-        .limit(1);
-
-      if (!adapterRow) {
-        return reply.code(400).send({ error: "Adapter config not found" });
-      }
-
-      const gamClient = buildGamClient(adapterRow);
-      const companyService = await gamClient.getService("CompanyService");
-
-      // Build PQL: filter to ADVERTISER type, optionally filter by name
-      const PAGE_LIMIT = fetchAll ? 500 : Math.min(limit, 500);
-      const whereClause = search
-        ? `WHERE type = 'ADVERTISER' AND name LIKE '%${search.replace(/'/g, "''")}%'`
-        : `WHERE type = 'ADVERTISER'`;
-
-      const allAdvertisers: Array<{ id: string; name: string }> = [];
-      let offset = 0;
-      for (;;) {
-        const statement = `${whereClause} LIMIT ${PAGE_LIMIT} OFFSET ${offset}`;
-        const page = (await (companyService as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)
-          .getCompaniesByStatement({ query: statement })) as Record<string, unknown>;
-
-        const results = (page["results"] as unknown[]) ?? [];
-        if (results.length === 0) break;
-
-        for (const c of results) {
-          const co = c as Record<string, unknown>;
-          allAdvertisers.push({
-            id: String(co["id"]),
-            name: typeof co["name"] === "string" ? co["name"] : String(co["id"]),
-          });
-        }
-
-        if (!fetchAll || results.length < PAGE_LIMIT) break;
-        offset += PAGE_LIMIT;
-      }
-
-      const advertisers = allAdvertisers.slice(0, limit);
-
-      return reply.send({
-        success: true,
-        advertisers,
-        count: advertisers.length,
-        search: search ?? null,
-        fetch_all: fetchAll,
+      const result = await fetchGamAdvertisers({
+        tenantId: id,
+        search,
         limit,
+        fetchAll,
       });
+      return reply.send({ success: true, ...result });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.code(500).send({ error: `Failed to fetch advertisers: ${msg}` });

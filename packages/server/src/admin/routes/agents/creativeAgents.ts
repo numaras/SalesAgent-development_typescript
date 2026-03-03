@@ -101,6 +101,12 @@ async function callAgentMcpTool(
   return result ?? {};
 }
 
+function parseTimeoutSeconds(raw: unknown): number {
+  const parsed = typeof raw === "number" ? raw : parseInt(String(raw ?? "30"), 10);
+  if (!Number.isFinite(parsed)) return 30;
+  return Math.max(1, Math.min(300, parsed));
+}
+
 const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.get("/tenant/:id/creative-agents/", async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -121,6 +127,7 @@ const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
       name: a.name,
       enabled: a.enabled,
       priority: a.priority,
+      timeout: a.timeout,
       auth_type: a.authType,
       has_auth: Boolean(a.authCredentials),
       created_at: a.createdAt?.toISOString() ?? null,
@@ -150,6 +157,7 @@ const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const enabled = body.enabled === true || body.enabled === "on";
     const priority = typeof body.priority === "number" ? body.priority : parseInt(String(body.priority || "10"), 10) || 10;
+    const timeout = parseTimeoutSeconds(body.timeout);
     const authType = typeof body.auth_type === "string" ? body.auth_type.trim() || null : null;
     const authCredentials = typeof body.auth_credentials === "string" ? body.auth_credentials.trim() || null : null;
 
@@ -169,6 +177,7 @@ const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
         name,
         enabled,
         priority,
+        timeout,
         authType,
         authHeader: typeof body.auth_header === "string" ? body.auth_header.trim() || null : null,
         authCredentials,
@@ -204,6 +213,7 @@ const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
         name: agent.name,
         enabled: agent.enabled,
         priority: agent.priority,
+        timeout: agent.timeout,
         auth_type: agent.authType,
         auth_header: agent.authHeader,
         auth_credentials: agent.authCredentials,
@@ -226,6 +236,7 @@ const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const enabled = body.enabled === true || body.enabled === "on";
     const priority = typeof body.priority === "number" ? body.priority : parseInt(String(body.priority || "10"), 10) || 10;
+    const timeout = parseTimeoutSeconds(body.timeout);
     const authType = typeof body.auth_type === "string" ? body.auth_type.trim() || null : null;
     const authCredentials = typeof body.auth_credentials === "string" ? body.auth_credentials.trim() || null : null;
 
@@ -248,6 +259,7 @@ const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
         name: name || agent.name,
         enabled,
         priority,
+        timeout,
         authType: authType ?? agent.authType,
         authHeader: typeof body.auth_header === "string" ? body.auth_header.trim() || null : agent.authHeader,
         authCredentials: authCredentials !== undefined ? authCredentials : agent.authCredentials,
@@ -299,6 +311,7 @@ const creativeAgentsRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
         {},
         agent.authHeader,
         agent.authCredentials,
+        Math.max(1, agent.timeout) * 1000,
       );
 
       const formats = (result["formats"] as Array<{ name?: string }>) ?? [];

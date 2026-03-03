@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if edit_mode else 'Add' }} Advertiser - Sales Agent Admin{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    <div class="back-button-container">
+        <a href="{{ url_for('tenants.dashboard', tenant_id=tenant_id) }}" class="btn btn-secondary btn-back">
+            ← Back to Dashboard
+        </a>
+    </div>
+
+    <h2>{{ 'Edit Advertiser' if edit_mode else 'Add New Advertiser' }}</h2>
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    {% if errors %}
+        {% for field, error in errors.items() %}
+        <div class="alert alert-error">{{ field }}: {{ error }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <form method="POST" style="margin-top: 2rem;">
+        <div class="form-group">
+            <label for="principal_id">Advertiser ID</label>
+            <input type="text" id="principal_id" name="principal_id" required
+                   pattern="[a-zA-Z0-9_-]+"
+                   placeholder="e.g., nike, coca_cola, ford_motors"
+                   title="Only letters, numbers, underscores, and hyphens allowed"
+                   value="{{ principal.principal_id if edit_mode else (form_data.principal_id if form_data else '') }}"
+                   {{ 'readonly' if edit_mode else '' }}
+                   class="{{ 'error' if errors and 'principal_id' in errors else '' }}">
+            <small>A unique identifier for this advertiser. Use lowercase with underscores.{% if edit_mode %} (Cannot be changed){% endif %}</small>
+        </div>
+
+        <div class="form-group">
+            <label for="name">Advertiser Name</label>
+            <input type="text" id="name" name="name" required
+                   placeholder="e.g., Nike Corporation"
+                   value="{{ principal.name if edit_mode else (form_data.name if form_data else '') }}"
+                   class="{{ 'error' if errors and 'name' in errors else '' }}">
+            <small>The advertiser's company name as it will appear in reports.</small>
+        </div>
+
+        {% if has_gam %}
+        <div class="form-group">
+            <label for="gam_advertiser_id">GAM Advertiser <span style="color: red;">*</span></label>
+            <select id="gam_advertiser_id" name="gam_advertiser_id" required
+                    class="{{ 'error' if errors and 'gam_advertiser_id' in errors else '' }}">
+                <option value="">Loading advertisers...</option>
+            </select>
+            <small>All campaigns for this advertiser will be created under this GAM advertiser account.</small>
+            <div id="advertiser-loading-error" style="display: none; color: red; margin-top: 0.5rem;"></div>
+        </div>
+        {% else %}
+        <div class="alert alert-info" style="margin: 1rem 0;">
+            <strong>ℹ️ Note:</strong> This tenant uses the Mock adapter for testing. No real ad server API calls will be made.
+            <br><strong>To use a real ad server</strong>, configure GAM or another adapter in the Settings → Ad Server tab.
+        </div>
+        <!-- Automatically enable mock adapter when no real ad server is configured -->
+        <input type="hidden" name="enable_mock" value="1">
+        {% endif %}
+
+        <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin: 2rem 0;">
+            <h4 style="margin-top: 0;">What happens next?</h4>
+            <ol style="margin: 0.5rem 0; padding-left: 1.5rem;">
+                <li>A secure API token will be generated for this advertiser</li>
+                <li>Share the API token with the advertiser to enable programmatic campaign access</li>
+                {% if has_gam %}
+                <li>When they create campaigns via the API, orders and line items will be created in GAM</li>
+                {% else %}
+                <li>Campaigns will use the Mock adapter (no real ad server API calls)</li>
+                {% endif %}
+            </ol>
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+            <button type="submit" class="btn">{{ 'Update Advertiser' if edit_mode else 'Add Advertiser' }}</button>
+            <a href="{{ url_for('tenants.dashboard', tenant_id=tenant_id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<style>
+input:invalid {
+    border-color: #dc3545;
+}
+</style>
+
+{% if has_gam %}
+<!-- Select2 CSS -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<!-- Select2 JS (requires jQuery) -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<script>
+// Initialize Select2 with server-side search
+document.addEventListener('DOMContentLoaded', function() {
+    const selectElement = $('#gam_advertiser_id');
+    const errorDiv = document.getElementById('advertiser-loading-error');
+
+    selectElement.select2({
+        placeholder: 'Search for a GAM Advertiser...',
+        allowClear: true,
+        minimumInputLength: 0, // Start searching from first character
+        ajax: {
+            url: '{{ script_name }}/tenant/{{ tenant_id }}/api/gam/get-advertisers',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            credentials: 'same-origin',
+            delay: 250, // Debounce search requests
+            data: function(params) {
+                // Build request based on search term
+                return JSON.stringify({
+                    search: params.term || '', // Search query from user typing
+                    limit: 100, // Limit results for dropdown
+                    fetch_all: false // Never fetch all advertisers
+                });
+            },
+            processResults: function(data) {
+                if (data.error) {
+                    errorDiv.textContent = 'Error: ' + data.error;
+                    errorDiv.style.display = 'block';
+                    return { results: [] };
+                }
+
+                errorDiv.style.display = 'none';
+
+                // Transform advertiser data for Select2
+                const results = data.advertisers.map(advertiser => ({
+                    id: advertiser.id,
+                    text: advertiser.name
+                }));
+
+                // Add info message if results were limited
+                let pagination = { more: false };
+                if (data.count >= 100) {
+                    pagination = {
+                        more: false // Don't show "load more" since we use search filtering
+                    };
+                }
+
+                return {
+                    results: results,
+                    pagination: pagination
+                };
+            },
+            transport: function(params, success, failure) {
+                // Custom transport to handle POST with JSON body
+                fetch(params.url, {
+                    method: params.method,
+                    headers: params.headers,
+                    body: params.data,
+                    credentials: params.credentials
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(success)
+                .catch(failure);
+            },
+            cache: true // Cache results for repeated searches
+        },
+        language: {
+            searching: function() {
+                return 'Searching advertisers...';
+            },
+            noResults: function() {
+                return 'No advertisers found. Try a different search term.';
+            },
+            inputTooShort: function() {
+                return 'Start typing to search...';
+            },
+            errorLoading: function() {
+                return 'Error loading advertisers. Please try again.';
+            }
+        },
+        templateResult: function(advertiser) {
+            if (advertiser.loading) {
+                return advertiser.text;
+            }
+            // Format each result in dropdown
+            return $('<div>').text(advertiser.text);
+        },
+        templateSelection: function(advertiser) {
+            // Format selected value
+            return advertiser.text || 'Select a GAM Advertiser...';
+        }
+    });
+
+    // Load initial results (first 100 advertisers) when dropdown opens
+    selectElement.on('select2:open', function() {
+        // Trigger a search with empty string to load initial results
+        const searchField = document.querySelector('.select2-search__field');
+        if (searchField) {
+            searchField.value = '';
+        }
+    });
+
+    // Restore previous selection if form was reloaded with errors OR in edit mode
+    {% if (form_data and form_data.gam_advertiser_id) or (edit_mode and existing_gam_id) %}
+    // Need to fetch the advertiser name to display it
+    const advertiserId = '{{ existing_gam_id if edit_mode else form_data.gam_advertiser_id }}';
+    fetch('{{ script_name }}/tenant/{{ tenant_id }}/api/gam/get-advertisers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            search: '',
+            limit: 500,
+            fetch_all: false
+        }),
+        credentials: 'same-origin'
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Compare as strings to handle type mismatches (DB stores strings, API might return numbers)
+        const previousAdvertiser = data.advertisers.find(a => String(a.id) === String(advertiserId));
+        if (previousAdvertiser) {
+            const option = new Option(previousAdvertiser.name, previousAdvertiser.id, true, true);
+            selectElement.append(option).trigger('change');
+        } else {
+            console.warn('Could not find advertiser with ID:', advertiserId, 'in', data.advertisers.length, 'results');
+        }
+    })
+    .catch(error => {
+        console.error('Error restoring previous selection:', error);
+    });
+    {% endif %}
+});
+</script>
+
+<style>
+/* Custom Select2 styling to match form theme */
+.select2-container--default .select2-selection--single {
+    height: 38px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    line-height: 36px;
+    padding-left: 12px;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 36px;
+}
+
+.select2-dropdown {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.select2-container--default .select2-results__option--highlighted[aria-selected] {
+    background-color: #007bff;
+}
+
+/* Make Select2 match the form width */
+.select2-container {
+    width: 100% !important;
+}
+</style>
+{% endif %}
+{% endblock %}

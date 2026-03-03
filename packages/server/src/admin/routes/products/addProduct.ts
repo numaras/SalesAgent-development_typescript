@@ -8,8 +8,16 @@ import { currencyLimits } from "../../../db/schema/currencyLimits.js";
 import { inventoryProfiles } from "../../../db/schema/inventoryProfiles.js";
 import { products } from "../../../db/schema/products.js";
 import { tenants } from "../../../db/schema/tenants.js";
+import { listFormats } from "../../../services/formatService.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
 import { getAdminSession } from "../../services/sessionService.js";
+
+const DEFAULT_CREATIVE_AGENT_URL = "https://creative.adcontextprotocol.org";
+
+function normalizeAgentUrl(url: string): string {
+  const trimmed = url.trim();
+  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+}
 
 function parseJsonArray(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
@@ -191,9 +199,36 @@ const addProductRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => 
       return fmt;
     }).filter((entry): entry is Record<string, unknown> & { agent_url: string; id: string } => Boolean(entry));
 
-    // Format validation against creative agent registry follows graceful-degradation path:
-    // TypeScript registry service not yet implemented; all submitted formats are accepted
-    // (mirrors Python's ADCPConnectionError fallback path at products.py L766-793).
+    if (formatRefs.length === 0) {
+      return reply.code(400).send({ error: "At least one format is required" });
+    }
+
+    // Validate default-agent format IDs when format lookup is available.
+    // Graceful fallback: if lookup fails, keep submitted formats (Python parity behavior).
+    try {
+      const available = await listFormats({ tenantId: id }, {});
+      const validDefaultAgentIds = new Set(
+        (available.formats ?? [])
+          .filter((f) => normalizeAgentUrl(f.format_id.agent_url) === DEFAULT_CREATIVE_AGENT_URL)
+          .map((f) => f.format_id.id),
+      );
+      if (validDefaultAgentIds.size > 0) {
+        const invalidDefaultFormats = formatRefs
+          .filter(
+            (f) =>
+              normalizeAgentUrl(f.agent_url) === DEFAULT_CREATIVE_AGENT_URL &&
+              !validDefaultAgentIds.has(f.id),
+          )
+          .map((f) => f.id);
+        if (invalidDefaultFormats.length > 0) {
+          return reply.code(400).send({
+            error: `Invalid format IDs: ${invalidDefaultFormats.join(", ")}`,
+          });
+        }
+      }
+    } catch {
+      // Keep graceful-degradation behavior when format lookup is unavailable.
+    }
 
     const pricingOptions = parsePricingOptions(body);
     if (pricingOptions.length === 0) {

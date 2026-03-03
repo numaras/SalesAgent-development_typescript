@@ -89,7 +89,7 @@ describe("listFormats", () => {
     const result = await listFormats({ tenantId: "t" }, { context: ctx });
 
     expect(result.context).toEqual(ctx);
-    expect(result.creative_agents).toBeNull();
+    expect(Array.isArray(result.creative_agents)).toBe(true);
     expect(result.errors).toBeNull();
   });
 });

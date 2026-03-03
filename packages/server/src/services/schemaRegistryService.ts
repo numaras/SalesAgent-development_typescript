@@ -29,7 +29,6 @@ export function normalizeSchemaName(name: string): string {
 /**
  * Schema entries: normalized name → Zod schema.
  * Mirrors Python create_schema_registry() in _legacy/src/core/schema_validation.py L25-61.
- * "getsignals" has no TS Zod equivalent (signals endpoint not yet migrated); kept as stub.
  */
 const SCHEMA_ENTRIES: Array<{ name: string; zodSchema: z.ZodTypeAny }> = [
   { name: "getproducts", zodSchema: GetProductsResponseSchema },
@@ -46,6 +45,42 @@ const SCHEMA_ENTRIES: Array<{ name: string; zodSchema: z.ZodTypeAny }> = [
     zodSchema: UpdatePerformanceIndexResponseSchema,
   },
 ];
+
+const getSignalsSchema: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    signals: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+      },
+      description: "Array of available signals",
+    },
+    errors: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          message: { type: "string" },
+        },
+        required: ["code", "message"],
+        additionalProperties: true,
+      },
+    },
+    context: {
+      type: "object",
+      additionalProperties: true,
+    },
+    ext: {
+      type: "object",
+      additionalProperties: true,
+    },
+  },
+  required: ["signals"],
+  additionalProperties: true,
+};
 
 /**
  * Build the schema registry: map normalized name → JSON Schema object.
@@ -87,15 +122,12 @@ export function createSchemaRegistry(baseUrl: string = ""): SchemaRegistry {
     };
   }
 
-  // getsignals: no TS Zod schema yet (GetSignalsResponse not migrated); stub matches
-  // Python schema shape so consumers can introspect the field name.
   registry["getsignals"] = {
+    ...getSignalsSchema,
     $schema: "https://json-schema.org/draft/2020-12/schema",
     $id: baseUrl ? `${baseUrl}/schemas/adcp/v2.4/getsignals.json` : undefined,
     title: "AdCP getsignals Response Schema",
     description: "JSON Schema for AdCP v2.4 getsignals response validation",
-    type: "object",
-    additionalProperties: true,
   };
 
   return registry;

@@ -117,7 +117,7 @@ function buildCriticalTasks(
     name: "Authorized Properties",
     description: "Configure properties with adagents.json for verification",
     is_complete: propertyCount > 0,
-    action_url: `/tenant/${tenantId}/inventory#publishers-pane`,
+    action_url: `/tenant/${tenantId}/publisher-partners`,
     details: propertiesDetails,
   });
 

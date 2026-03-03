@@ -197,6 +197,27 @@ describe("Admin manual validators", () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it("add product returns 400 when default-agent format id is invalid", async () => {
+    selectRowsQueue.push([{ tenantId: "tenant-1", adServer: "mock" }]);
+    const app = await createRouteApp(addProductRoute);
+    const res = await app.inject({
+      method: "POST",
+      url: "/tenant/tenant-1/products/add",
+      payload: {
+        name: "Product A",
+        formats: [
+          {
+            agent_url: "https://creative.adcontextprotocol.org",
+            id: "display_999x999",
+          },
+        ],
+        pricing_options: [{ is_fixed: true, fixed_price: "10.00", currency_code: "USD" }],
+      },
+    });
+    await app.close();
+    expect(res.statusCode).toBe(400);
+  });
+
   it("edit product returns 400 for invalid inventory profile id", async () => {
     selectRowsQueue.push([{ productId: "prod-1", inventoryProfileId: null, maxSignals: 5 }]);
     const app = await createRouteApp(editProductRoute);
@@ -206,6 +227,27 @@ describe("Admin manual validators", () => {
       payload: {
         name: "Product A",
         inventory_profile_id: "not-a-number",
+        pricing_options: [{ is_fixed: true }],
+      },
+    });
+    await app.close();
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("edit product returns 400 when default-agent format id is invalid", async () => {
+    selectRowsQueue.push([{ productId: "prod-1", inventoryProfileId: null, maxSignals: 5 }]);
+    const app = await createRouteApp(editProductRoute);
+    const res = await app.inject({
+      method: "POST",
+      url: "/tenant/tenant-1/products/prod-1/edit",
+      payload: {
+        name: "Product A",
+        formats: [
+          {
+            agent_url: "https://creative.adcontextprotocol.org/",
+            id: "display_999x999",
+          },
+        ],
         pricing_options: [{ is_fixed: true }],
       },
     });

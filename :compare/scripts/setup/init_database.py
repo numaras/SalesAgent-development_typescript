@@ -1,0 +1,419 @@
+import os
+import secrets
+import sys
+
+# Add project root to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+
+from scripts.ops.migrate import run_migrations
+from src.core.database.database_session import get_db_session
+from src.core.database.models import AdapterConfig, Principal, Product, Tenant, TenantManagementConfig
+
+
+def init_db(exit_on_error=False):
+    """Initialize database with migrations and populate default data.
+
+    Args:
+        exit_on_error: If True, exit process on migration error. If False, raise exception.
+                      Default False for test compatibility.
+    """
+    # Run migrations first
+    print("Applying database migrations...")
+    run_migrations(exit_on_error=exit_on_error)
+
+    # Now populate default data if needed
+    with get_db_session() as session:
+        # Initialize tenant management configuration from environment variables
+        tenant_management_emails = os.environ.get("TENANT_MANAGEMENT_EMAILS", os.environ.get("SUPER_ADMIN_EMAILS", ""))
+        if tenant_management_emails:
+            # Check if config exists
+            existing_config = session.query(TenantManagementConfig).filter_by(config_key="super_admin_emails").first()
+            if not existing_config:
+                # Create new config
+                config = TenantManagementConfig(
+                    config_key="super_admin_emails",
+                    config_value=tenant_management_emails,
+                    description="Tenant management admin email addresses",
+                )
+                session.add(config)
+                session.commit()
+                print(f"✅ Initialized tenant management emails: {tenant_management_emails}")
+            else:
+                # Update existing config if environment variable is set
+                existing_config.config_value = tenant_management_emails
+                session.commit()
+                print(f"✅ Updated tenant management emails: {tenant_management_emails}")
+
+        # Similarly for tenant management domains
+        tenant_management_domains = os.environ.get(
+            "TENANT_MANAGEMENT_DOMAINS", os.environ.get("SUPER_ADMIN_DOMAINS", "")
+        )
+        if tenant_management_domains:
+            existing_config = session.query(TenantManagementConfig).filter_by(config_key="super_admin_domains").first()
+            if not existing_config:
+                config = TenantManagementConfig(
+                    config_key="super_admin_domains",
+                    config_value=tenant_management_domains,
+                    description="Tenant management admin email domains",
+                )
+                session.add(config)
+                session.commit()
+                print(f"✅ Initialized tenant management domains: {tenant_management_domains}")
+            else:
+                existing_config.config_value = tenant_management_domains
+                session.commit()
+                print(f"✅ Updated tenant management domains: {tenant_management_domains}")
+
+        # Check if demo tenant creation is enabled (default: false for production deployments)
+        create_demo_tenant = os.environ.get("CREATE_DEMO_TENANT", "false").lower() == "true"
+
+        # Check if default tenant already exists (idempotent for CI/testing)
+        from sqlalchemy import select
+        from sqlalchemy.exc import IntegrityError
+
+        stmt = select(Tenant).filter_by(tenant_id="default")
+        existing_tenant = session.scalars(stmt).first()
+
+        if not existing_tenant and not create_demo_tenant:
+            # Demo tenant disabled - user will create their own via signup flow or CLI
+            print(
+                """
+╔══════════════════════════════════════════════════════════════════════════╗
+║                        🚀 ADCP SALES AGENT READY                         ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║                                                                          ║
+║  No demo tenant created (CREATE_DEMO_TENANT=false)                       ║
+║                                                                          ║
+║  To create a tenant:                                                     ║
+║  • Sign up via Admin UI: http://localhost:8001                           ║
+║  • Or use CLI:                                                           ║
+║    python -m scripts.setup.setup_tenant "My Publisher" --adapter mock    ║
+║    python -m scripts.setup.setup_tenant "My Publisher" --adapter gam     ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+"""
+            )
+            return
+
+        if not existing_tenant:
+            # No default tenant exists - create one for simple use case
+            admin_token = secrets.token_urlsafe(32)
+            secrets.token_urlsafe(32)
+
+            # Create default tenant
+            from datetime import UTC, datetime
+
+            now = datetime.now(UTC)
+            default_tenant = Tenant(
+                tenant_id="default",
+                name="Default Publisher",
+                subdomain="default",  # Proper subdomain routing
+                is_active=True,
+                billing_plan="standard",
+                ad_server="mock",
+                enable_axe_signals=True,
+                admin_token=admin_token,
+                human_review_required=True,
+                auto_approve_format_ids=["display_300x250", "display_728x90", "display_320x50"],
+                brand_manifest_policy="public",  # Allow unauthenticated discovery for quick start
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(default_tenant)
+
+            try:
+                session.flush()  # Try to write tenant first to catch duplicates
+            except IntegrityError:
+                # Tenant was created by another process/thread - rollback and continue
+                session.rollback()
+                print("ℹ️  Default tenant already exists (created by concurrent process)")
+                return  # Exit early since tenant exists
+
+            # Add default currency limit for USD
+            from src.core.database.models import CurrencyLimit
+
+            default_currency_limit = CurrencyLimit(
+                tenant_id="default",
+                currency_code="USD",
+                min_package_budget=1000.0,
+                max_daily_package_spend=10000.0,
+            )
+            session.add(default_currency_limit)
+
+            # Create adapter config for mock adapter
+            adapter_config = AdapterConfig(tenant_id="default", adapter_type="mock", mock_dry_run=False)
+            session.add(adapter_config)
+
+            # Create default principal with well-known token for easy testing
+            # This token is documented and can be used immediately after docker-compose up
+            default_principal = Principal(
+                tenant_id="default",
+                principal_id="default_principal",
+                name="Default Principal",
+                platform_mappings={"mock": {"advertiser_id": "mock-default"}},
+                access_token="test-token",  # Well-known token for easy testing
+            )
+            session.add(default_principal)
+
+            # Always create basic products for demo/testing
+            basic_products = [
+                Product(
+                    tenant_id="default",
+                    product_id="prod_display_premium",
+                    name="Premium Display Package",
+                    description="Premium display advertising across news and sports sections",
+                    format_ids=[
+                        {
+                            "agent_url": "https://creative.adcontextprotocol.org",
+                            "id": "display_300x250",
+                        }
+                    ],
+                    targeting_template={"geo_countries": ["US"]},
+                    delivery_type="guaranteed",
+                    is_fixed_price=False,
+                    price_guidance={"floor": 10.0, "p50": 15.0, "p75": 20.0},
+                    countries=["United States"],
+                    implementation_config={
+                        "placement_ids": ["premium_300x250"],
+                        "ad_unit_path": "/1234/premium/display",
+                    },
+                ),
+                Product(
+                    tenant_id="default",
+                    product_id="prod_video_sports",
+                    name="Sports Video Package",
+                    description="Pre-roll video ads for sports content",
+                    format_ids=[
+                        {
+                            "agent_url": "https://creative.adcontextprotocol.org",
+                            "id": "video_preroll",
+                        }
+                    ],
+                    targeting_template={"content_cat_any_of": ["sports"]},
+                    delivery_type="guaranteed",
+                    is_fixed_price=True,
+                    cpm=25.0,
+                    countries=["United States", "Canada"],
+                    implementation_config={
+                        "placement_ids": ["sports_video_preroll"],
+                        "ad_unit_path": "/1234/sports/video",
+                    },
+                ),
+            ]
+            for product in basic_products:
+                session.add(product)
+
+            # Only create sample advertisers if this is a development environment
+            if os.environ.get("CREATE_SAMPLE_DATA", "false").lower() == "true":
+                principals_data = [
+                    {
+                        "principal_id": "acme_corp",
+                        "name": "Acme Corporation",
+                        "platform_mappings": {
+                            "google_ad_manager": {
+                                "advertiser_id": "67890",
+                                "enabled": True,
+                            },
+                            "kevel": {
+                                "advertiser_id": "acme-corporation",
+                                "enabled": True,
+                            },
+                            "mock": {
+                                "advertiser_id": "mock-acme",
+                                "enabled": True,
+                            },
+                        },
+                        "access_token": "acme_corp_token",
+                    },
+                    {
+                        "principal_id": "purina",
+                        "name": "Purina Pet Foods",
+                        "platform_mappings": {
+                            "google_ad_manager": {
+                                "advertiser_id": "12345",
+                                "enabled": True,
+                            },
+                            "kevel": {
+                                "advertiser_id": "purina-pet-foods",
+                                "enabled": True,
+                            },
+                            "mock": {
+                                "advertiser_id": "mock-purina",
+                                "enabled": True,
+                            },
+                        },
+                        "access_token": "purina_token",
+                    },
+                ]
+
+                for p in principals_data:
+                    principal = Principal(
+                        tenant_id="default",
+                        principal_id=p["principal_id"],
+                        name=p["name"],
+                        platform_mappings=p["platform_mappings"],
+                        access_token=p["access_token"],
+                    )
+                    session.add(principal)
+
+                # Create sample products
+                products_data = [
+                    {
+                        "product_id": "prod_1",
+                        "name": "Premium Display - News",
+                        "description": "Premium news site display inventory",
+                        "formats": [
+                            {
+                                "agent_url": "https://creative.adcontextprotocol.org",
+                                "id": "display_300x250",
+                            }
+                        ],
+                        "targeting_template": {
+                            "content_cat_any_of": ["news", "politics"],
+                            "geo_countries": ["US"],
+                        },
+                        "delivery_type": "guaranteed",
+                        "is_fixed_price": False,
+                        "cpm": None,
+                        "price_guidance": {"floor": 5.0, "p50": 8.0, "p75": 10.0},
+                        "implementation_config": {
+                            "placement_ids": ["news_300x250_atf", "news_300x250_btf"],
+                            "ad_unit_path": "/1234/news/display",
+                            "key_values": {"section": "news", "tier": "premium"},
+                            "targeting": {"content_cat_any_of": ["news", "politics"], "geo_countries": ["US"]},
+                        },
+                    },
+                    {
+                        "product_id": "prod_2",
+                        "name": "Run of Site Display",
+                        "description": "Run of site display inventory",
+                        "formats": [
+                            {
+                                "agent_url": "https://creative.adcontextprotocol.org",
+                                "id": "display_728x90",
+                            }
+                        ],
+                        "targeting_template": {"geo_countries": ["US", "CA"]},
+                        "delivery_type": "non_guaranteed",
+                        "is_fixed_price": True,
+                        "cpm": 2.5,
+                        "price_guidance": None,
+                        "implementation_config": {
+                            "placement_ids": ["ros_728x90_all"],
+                            "ad_unit_path": "/1234/run_of_site/leaderboard",
+                            "key_values": {"tier": "standard"},
+                            "targeting": {"geo_countries": ["US", "CA"]},
+                        },
+                    },
+                ]
+
+                for p in products_data:
+                    product = Product(
+                        tenant_id="default",
+                        product_id=p["product_id"],
+                        name=p["name"],
+                        description=p["description"],
+                        format_ids=p["formats"],
+                        targeting_template=p["targeting_template"],
+                        delivery_type=p["delivery_type"],
+                        is_fixed_price=p["is_fixed_price"],
+                        cpm=p.get("cpm"),
+                        price_guidance=p.get("price_guidance"),
+                        implementation_config=p.get("implementation_config"),
+                        property_tags=["all_inventory"],  # Required per AdCP spec
+                    )
+                    session.add(product)
+
+            # Commit all changes (ignore if already exists - idempotent for testing/CI)
+            try:
+                session.commit()
+            except Exception as e:
+                # If tenant already exists (race condition during startup), rollback and continue
+                session.rollback()
+                print(f"ℹ️  Default tenant may already exist (this is normal): {e}")
+                # Refresh the existing tenant to use it
+                stmt = select(Tenant).filter_by(tenant_id="default")
+                existing_tenant = session.scalars(stmt).first()
+                if not existing_tenant:
+                    # Really failed - re-raise
+                    raise
+
+            # Update the print statement based on whether sample data was created
+            if os.environ.get("CREATE_SAMPLE_DATA", "false").lower() == "true":
+                print(
+                    f"""
+╔══════════════════════════════════════════════════════════════════╗
+║                 🚀 ADCP SALES AGENT INITIALIZED                  ║
+╠══════════════════════════════════════════════════════════════════╣
+║                                                                  ║
+║  A default tenant has been created for quick start:              ║
+║                                                                  ║
+║  🏢 Tenant: Default Publisher                                    ║
+║  🌐 URL: http://localhost:8080                                   ║
+║                                                                  ║
+║  🔑 Admin Token (x-adcp-auth header):                            ║
+║     {admin_token}  ║
+║                                                                  ║
+║  👤 Sample Advertiser Tokens:                                    ║
+║     • Acme Corp: acme_corp_token                                 ║
+║     • Purina: purina_token                                       ║
+║                                                                  ║
+║  💡 To create additional tenants:                                ║
+║     python scripts/setup/setup_tenant.py "Publisher Name"        ║
+║                                                                  ║
+║  📚 To use with a different tenant:                              ║
+║     http://[subdomain].localhost:8080                            ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+                """
+                )
+            else:
+                print(
+                    """
+╔══════════════════════════════════════════════════════════════════════════╗
+║                        🚀 ADCP SALES AGENT READY                         ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║                                                                          ║
+║  ⚡ TEST IT NOW:                                                         ║
+║                                                                          ║
+║  # List available tools                                                  ║
+║  uvx adcp http://localhost:8080/mcp/ --auth test-token list_tools        ║
+║                                                                          ║
+║  # Search for products (syntax: <url> --auth <token> <tool> '<json>')    ║
+║  uvx adcp http://localhost:8080/mcp/ --auth test-token \\                ║
+║    get_products '{"brief":"video"}'                                      ║
+║                                                                          ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║                                                                          ║
+║  🏢 Default Tenant: Default Publisher                                    ║
+║  🔑 Principal Token: test-token                                          ║
+║  🌐 Admin UI: http://localhost:8001                                      ║
+║     Login: test_super_admin@example.com / test123                        ║
+║                                                                          ║
+║  📚 Create your own tenant:                                              ║
+║     docker-compose exec adcp-server python \\                            ║
+║       -m scripts.setup.setup_tenant "My Publisher" --adapter mock        ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+                """
+                )
+        else:
+            # Tenant already exists - show ready message with quick-start info
+            from sqlalchemy import func, select
+
+            stmt = select(func.count()).select_from(Tenant)
+            tenant_count = session.scalar(stmt)
+            print(
+                f"""
+✅ Database ready ({tenant_count} tenant(s))
+
+⚡ Quick test: uvx adcp http://localhost:8080/mcp/ --auth test-token list_tools
+
+🌐 Admin UI: http://localhost:8001
+   Login: test_super_admin@example.com / test123
+"""
+            )
+
+
+if __name__ == "__main__":
+    init_db(exit_on_error=True)

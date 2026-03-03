@@ -3,11 +3,13 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 
 import { db } from "../../../db/client.js";
 import { tenants } from "../../../db/schema/tenants.js";
+import { requireTenantAccess } from "../../services/authGuard.js";
 import { getAdminSession } from "../../services/sessionService.js";
 
 const reportingRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.get("/tenant/:id/reporting", async (request, reply) => {
     const { id } = request.params as { id: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
     const session = getAdminSession(request);
     if (!session.user) return reply.code(401).send({ error: "UNAUTHENTICATED" });
     if (session.role !== "super_admin" && session.tenant_id !== id) {

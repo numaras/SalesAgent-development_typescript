@@ -22,6 +22,7 @@ import completeTaskRoute from "./routes/mcp/completeTask.js";
 import createMediaBuyRoute from "./routes/mcp/createMediaBuy.js";
 import getAdcpCapabilitiesRoute from "./routes/mcp/getAdcpCapabilities.js";
 import getMediaBuyDeliveryRoute from "./routes/mcp/getMediaBuyDelivery.js";
+import getMediaBuysRoute from "./routes/mcp/getMediaBuys.js";
 import getProductsRoute from "./routes/mcp/getProducts.js";
 import getTaskRoute from "./routes/mcp/getTask.js";
 import listAuthorizedPropertiesRoute from "./routes/mcp/listAuthorizedProperties.js";
@@ -131,6 +132,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     await app.register(createMediaBuyRoute, { prefix: "/mcp" });
     await app.register(updateMediaBuyRoute, { prefix: "/mcp" });
     await app.register(getMediaBuyDeliveryRoute, { prefix: "/mcp" });
+    await app.register(getMediaBuysRoute, { prefix: "/mcp" });
     await app.register(updatePerformanceIndexRoute, { prefix: "/mcp" });
     await app.register(listTasksRoute, { prefix: "/mcp" });
     await app.register(getTaskRoute, { prefix: "/mcp" });

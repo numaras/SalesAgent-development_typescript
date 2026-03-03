@@ -9,6 +9,7 @@ import { db } from "../../../db/client.js";
 import { adapterConfigs } from "../../../db/schema/adapterConfigs.js";
 import { gamInventory } from "../../../db/schema/gamInventory.js";
 import { tenants } from "../../../db/schema/tenants.js";
+import { buildGamClient } from "../../../gam/gamClient.js";
 import {
   getTargetingAllRouteSchema,
   getTargetingValuesRouteSchema,
@@ -138,8 +139,43 @@ const targetingRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       });
     }
 
-    // GAM SDK not yet migrated to TypeScript; values are fetched live from GAM in Python.
-    return reply.send({ values: [], count: 0 });
+    const numericKeyId = Number(keyId);
+    if (!Number.isFinite(numericKeyId)) {
+      return reply.code(400).send({ error: "Invalid custom targeting key ID" });
+    }
+
+    try {
+      const gamClient = buildGamClient(adapterConfig);
+      const customTargetingService = await gamClient.getService("CustomTargetingService");
+
+      const query = `WHERE customTargetingKeyId = ${numericKeyId} LIMIT 1000 OFFSET 0`;
+      const response = (await (customTargetingService as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)
+        .getCustomTargetingValuesByStatement({ query })) as Record<string, unknown>;
+
+      const results = (response["results"] as unknown[]) ?? [];
+      const values = results.map((item) => {
+        const value = item as Record<string, unknown>;
+        return {
+          id: String(value["id"] ?? ""),
+          name: typeof value["name"] === "string" ? value["name"] : "",
+          display_name:
+            typeof value["displayName"] === "string"
+              ? value["displayName"]
+              : typeof value["name"] === "string"
+                ? value["name"]
+                : "",
+          match_type: typeof value["matchType"] === "string" ? value["matchType"] : "EXACT",
+          status: typeof value["status"] === "string" ? value["status"] : "ACTIVE",
+          key_id: keyId,
+          key_name: keyRow.name,
+        };
+      });
+
+      return reply.send({ values, count: values.length });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: `Failed to fetch targeting values: ${msg}` });
+    }
   });
 };
 

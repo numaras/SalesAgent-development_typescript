@@ -2,10 +2,46 @@
  * Unit tests for A2A bulk skills handlers.
  *
  * Covers: auth required for delegated skills, get_media_buy_delivery success path,
- * optional-auth delegations (creative formats/properties), stub responses,
+ * optional-auth delegations (creative formats/properties), direct DB-backed skills,
  * update_performance_index, sync_creatives, list_creatives, and legacy conversion.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockSelectQueue: unknown[][] = [];
+const mockInsertedReviewValues: Record<string, unknown>[] = [];
+const mockUpdatedCreativeValues: Record<string, unknown>[] = [];
+
+const mockDbSelect = vi.fn(() => ({
+  from: vi.fn(() => ({
+    where: vi.fn(() => ({
+      limit: vi.fn(async () => mockSelectQueue.shift() ?? []),
+    })),
+  })),
+}));
+
+const mockDbInsert = vi.fn(() => ({
+  values: vi.fn(async (values: Record<string, unknown>) => {
+    mockInsertedReviewValues.push(values);
+    return [];
+  }),
+}));
+
+const mockDbUpdate = vi.fn(() => ({
+  set: vi.fn((values: Record<string, unknown>) => {
+    mockUpdatedCreativeValues.push(values);
+    return {
+      where: vi.fn(async () => []),
+    };
+  }),
+}));
+
+vi.mock("../../db/client.js", () => ({
+  db: {
+    select: (...args: unknown[]) => mockDbSelect(...args),
+    insert: (...args: unknown[]) => mockDbInsert(...args),
+    update: (...args: unknown[]) => mockDbUpdate(...args),
+  },
+}));
 
 const mockGetMediaBuyDelivery = vi.fn();
 vi.mock("../../services/deliveryQueryService.js", () => ({
@@ -78,6 +114,9 @@ const toolContext = {
 describe("bulk skills", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockSelectQueue.length = 0;
+    mockInsertedReviewValues.length = 0;
+    mockUpdatedCreativeValues.length = 0;
     vi.mocked(authExtractor.createA2AContext).mockResolvedValue(minimalContext);
     mockIsToolContext.mockReturnValue(false);
     mockGetMediaBuyDelivery.mockResolvedValue({
@@ -160,7 +199,7 @@ describe("bulk skills", () => {
   });
 
   describe("approve_creative", () => {
-    it("returns stub message when called with ToolContext", async () => {
+    it("returns validation error when creative_id is missing", async () => {
       vi.mocked(authExtractor.createA2AContext).mockResolvedValueOnce({
         ...toolContext,
         toolName: "approve_creative",
@@ -171,10 +210,55 @@ describe("bulk skills", () => {
 
       expect(result).toEqual({
         success: false,
-        message:
-          "approve_creative skill not yet implemented in explicit invocation",
+        message: "creative_id is required",
         parameters_received: {},
       });
+    });
+
+    it("approves a creative owned by authenticated principal", async () => {
+      vi.mocked(authExtractor.createA2AContext).mockResolvedValueOnce({
+        ...toolContext,
+        toolName: "approve_creative",
+      });
+      mockIsToolContext.mockReturnValue(true);
+      mockSelectQueue.push([
+        {
+          creativeId: "cr-1",
+          tenantId: "tenant-1",
+          principalId: "principal-1",
+          status: "draft",
+        },
+      ]);
+
+      const result = await dispatch(
+        "approve_creative",
+        { creative_id: "cr-1", approved_by: "approver@example.com" },
+        "token-1",
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          creative_id: "cr-1",
+          status: "approved",
+        }),
+      );
+      expect(mockInsertedReviewValues).toHaveLength(1);
+      expect(mockInsertedReviewValues[0]).toEqual(
+        expect.objectContaining({
+          creativeId: "cr-1",
+          tenantId: "tenant-1",
+          reviewerEmail: "approver@example.com",
+          finalDecision: "approved",
+        }),
+      );
+      expect(mockUpdatedCreativeValues).toHaveLength(1);
+      expect(mockUpdatedCreativeValues[0]).toEqual(
+        expect.objectContaining({
+          status: "approved",
+          approvedBy: "approver@example.com",
+        }),
+      );
     });
   });
 
@@ -211,21 +295,42 @@ describe("bulk skills", () => {
   });
 
   describe("get_media_buy_status", () => {
-    it("returns stub message when called with ToolContext", async () => {
+    it("returns media buy status and readiness details", async () => {
       vi.mocked(authExtractor.createA2AContext).mockResolvedValueOnce({
         ...toolContext,
         toolName: "get_media_buy_status",
       });
       mockIsToolContext.mockReturnValue(true);
+      mockSelectQueue.push([
+        {
+          mediaBuyId: "mb-1",
+          buyerRef: "buyer-1",
+          status: "draft",
+          startDate: "2026-02-01",
+          endDate: "2026-03-01",
+          startTime: new Date("2026-02-01T00:00:00.000Z"),
+          endTime: new Date("2026-03-01T00:00:00.000Z"),
+          rawRequest: { packaged_products: [{ budget: 100 }] },
+        },
+      ]);
 
-      const result = await dispatch("get_media_buy_status", {}, "token-1");
+      const result = await dispatch(
+        "get_media_buy_status",
+        { media_buy_id: "mb-1" },
+        "token-1",
+      );
 
-      expect(result).toEqual({
-        success: false,
-        message:
-          "get_media_buy_status skill not yet implemented in explicit invocation",
-        parameters_received: {},
-      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          media_buy_id: "mb-1",
+          buyer_ref: "buyer-1",
+          status: "draft",
+          readiness_state: expect.any(String),
+          is_ready_to_activate: expect.any(Boolean),
+          blocking_issues: expect.any(Array),
+        }),
+      );
     });
   });
 

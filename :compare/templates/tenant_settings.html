@@ -1,0 +1,3308 @@
+{% extends "base.html" %}
+
+{% block title %}{{ tenant.name }} - Settings{% endblock %}
+
+{% block scripts %}
+<!-- jQuery and Select2 for principal edit modal -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<style>
+    /* Spinning animation for sync button */
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    .settings-layout {
+        display: grid;
+        grid-template-columns: 250px 1fr;
+        gap: 2rem;
+        min-height: 600px;
+    }
+
+    .settings-nav {
+        background: white;
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        height: fit-content;
+        position: sticky;
+        top: 1rem;
+    }
+
+    .settings-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.25rem;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-size: 0.875rem;
+        color: #4b5563;
+        text-decoration: none;
+    }
+
+    .settings-nav-item:hover {
+        background: #f3f4f6;
+        color: #111827;
+    }
+
+    .settings-nav-item.active {
+        background: #eff6ff;
+        color: #2563eb;
+        font-weight: 600;
+    }
+
+    .settings-nav-icon {
+        width: 20px;
+        text-align: center;
+    }
+
+    .settings-nav-separator {
+        height: 1px;
+        background: #e5e7eb;
+        margin: 1rem 0;
+    }
+
+    .settings-content {
+        background: white;
+        border-radius: 12px;
+        padding: 2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .settings-section {
+        display: none;
+    }
+
+    .settings-section.active {
+        display: block;
+    }
+
+    .settings-header {
+        margin-bottom: 2rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .settings-header h2 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #111827;
+    }
+
+    .settings-header p {
+        margin: 0;
+        color: #6b7280;
+        font-size: 0.875rem;
+    }
+
+    .form-section {
+        margin-bottom: 2rem;
+    }
+
+    .form-section h3 {
+        margin: 0 0 1rem 0;
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: #111827;
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+    }
+
+    .form-group {
+        margin-bottom: 1rem;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 0.375rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #374151;
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+        width: 100%;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        transition: all 0.2s;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    .form-group small {
+        display: block;
+        margin-top: 0.25rem;
+        font-size: 0.75rem;
+        color: #6b7280;
+    }
+
+    .checkbox-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+    }
+
+    .checkbox-group label {
+        margin: 0;
+        font-size: 0.875rem;
+        color: #374151;
+    }
+
+    .status-card {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .status-card.success {
+        background: #f0fdf4;
+        border-color: #86efac;
+    }
+
+    .status-card.warning {
+        background: #fffbeb;
+        border-color: #fde047;
+    }
+
+    .status-card.error {
+        background: #fef2f2;
+        border-color: #fca5a5;
+    }
+
+    .status-card.danger {
+        background: #fef2f2;
+        border: 2px solid #dc2626;
+        border-left: 4px solid #dc2626;
+    }
+
+    .adapter-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .adapter-card {
+        border: 2px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 1rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        position: relative;
+    }
+
+    .adapter-card:hover {
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+    }
+
+    .adapter-card.selected {
+        border-color: #3b82f6;
+        background: #eff6ff;
+    }
+
+    .adapter-card.current {
+        border-color: #10b981;
+        background: #f0fdf4;
+    }
+
+    .adapter-card.disabled {
+        border-color: #d1d5db;
+        background: #f9fafb;
+        color: #9ca3af;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .adapter-card.disabled:hover {
+        border-color: #d1d5db;
+        box-shadow: none;
+    }
+
+    .adapter-card .prerequisite-notice {
+        font-size: 0.75rem;
+        color: #ef4444;
+        margin-top: 0.5rem;
+        font-weight: 500;
+    }
+
+    .adapter-card h4 {
+        margin: 0 0 0.5rem 0;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .adapter-card p {
+        margin: 0;
+        font-size: 0.75rem;
+        color: #6b7280;
+    }
+
+    .adapter-badge {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        padding: 0.125rem 0.5rem;
+        background: #10b981;
+        color: white;
+        font-size: 0.625rem;
+        font-weight: 600;
+        border-radius: 4px;
+        text-transform: uppercase;
+    }
+
+    .button-group {
+        display: flex;
+        gap: 0.75rem;
+        margin-top: 2rem;
+        padding-top: 2rem;
+        border-top: 1px solid #e5e7eb;
+    }
+
+    .config-code {
+        background: #1f2937;
+        color: #f3f4f6;
+        padding: 1rem;
+        border-radius: 8px;
+        font-family: 'Monaco', 'Courier New', monospace;
+        font-size: 0.75rem;
+        overflow-x: auto;
+        position: relative;
+    }
+
+    .copy-button {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        padding: 0.25rem 0.5rem;
+        background: #374151;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        cursor: pointer;
+    }
+
+    .copy-button:hover {
+        background: #4b5563;
+    }
+
+    .btn {
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        border: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .btn-primary {
+        background: #3b82f6;
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: #2563eb;
+    }
+
+    .btn-secondary {
+        background: #6b7280;
+        color: white;
+    }
+
+    .btn-secondary:hover {
+        background: #4b5563;
+    }
+
+    .btn-success {
+        background: #10b981;
+        color: white;
+    }
+
+    .btn-success:hover {
+        background: #059669;
+    }
+
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #dc2626;
+    }
+
+    .alert {
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        border: 1px solid;
+    }
+
+    .alert-warning {
+        background: #fffbeb;
+        border-color: #fde047;
+        color: #92400e;
+    }
+
+    .alert-info {
+        background: #eff6ff;
+        border-color: #93c5fd;
+        color: #1e40af;
+    }
+
+    .stat-card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #111827;
+        margin-bottom: 0.25rem;
+    }
+
+    .stat-label {
+        font-size: 0.875rem;
+        color: #6b7280;
+        font-weight: 500;
+    }
+
+    @media (max-width: 768px) {
+        .settings-layout {
+            grid-template-columns: 1fr;
+        }
+
+        .settings-nav {
+            position: static;
+        }
+
+        .form-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .stats-grid {
+            grid-template-columns: 1fr !important;
+        }
+    }
+
+    /* Virtual Host now uses simple text input - complex widget styling removed */
+</style>
+
+<!-- Header -->
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <h1 style="margin: 0; font-size: 1.875rem; font-weight: 700; color: #111827;">Settings</h1>
+        <p style="margin: 0.25rem 0 0 0; color: #6b7280; font-size: 0.875rem;">
+            Configure {{ tenant.name }}
+        </p>
+    </div>
+    <a href="/tenant/{{ tenant.tenant_id }}" class="btn btn-secondary">
+        ← Back to Dashboard
+    </a>
+</div>
+
+<div class="settings-layout">
+    <!-- Settings Navigation -->
+    <nav class="settings-nav">
+        <a class="settings-nav-item active" data-section="account">
+            <span class="settings-nav-icon">🏢</span>
+            <span>Account</span>
+        </a>
+
+        <a class="settings-nav-item" href="{{ url_for('tenants.setup_checklist', tenant_id=tenant.tenant_id) }}">
+            <span class="settings-nav-icon">✅</span>
+            <span>Setup Checklist</span>
+        </a>
+
+        <a class="settings-nav-item" href="{{ url_for('users.list_users', tenant_id=tenant.tenant_id) }}">
+            <span class="settings-nav-icon">👥</span>
+            <span>Users & Access</span>
+        </a>
+
+        <div class="settings-nav-separator"></div>
+
+        <a class="settings-nav-item" data-section="adserver">
+            <span class="settings-nav-icon">🖥️</span>
+            <span>Ad Server</span>
+        </a>
+
+        <a class="settings-nav-item" data-section="business-rules">
+            <span class="settings-nav-icon">📋</span>
+            <span>Policies & Workflows</span>
+        </a>
+
+        <a class="settings-nav-item" data-section="integrations">
+            <span class="settings-nav-icon">🔗</span>
+            <span>Integrations</span>
+        </a>
+
+        <div class="settings-nav-separator"></div>
+
+        <a class="settings-nav-item" data-section="publishers">
+            <span class="settings-nav-icon">🌐</span>
+            <span>Publishers</span>
+        </a>
+
+        <a class="settings-nav-item" data-section="products">
+            <span class="settings-nav-icon">📦</span>
+            <span>Products</span>
+        </a>
+
+        <a class="settings-nav-item" data-section="inventory">
+            <span class="settings-nav-icon">📊</span>
+            <span>Inventory</span>
+        </a>
+
+        <div class="settings-nav-separator"></div>
+
+        <a class="settings-nav-item" data-section="advertisers">
+            <span class="settings-nav-icon">👥</span>
+            <span>Advertisers</span>
+        </a>
+
+        {% if not single_tenant_mode %}
+        <div class="settings-nav-separator"></div>
+
+        <a class="settings-nav-item" data-section="danger-zone">
+            <span class="settings-nav-icon">⚠️</span>
+            <span>Danger Zone</span>
+        </a>
+        {% endif %}
+    </nav>
+
+    <!-- Settings Content -->
+    <div class="settings-content">
+        <!-- Account Settings (renamed from General) -->
+        <div id="account" class="settings-section active">
+            <div class="settings-header">
+                <h2>Account</h2>
+                <p>Organization identity, virtual host configuration, and access control</p>
+            </div>
+
+            <form id="account-settings-form" method="POST" action="/tenant/{{ tenant.tenant_id }}/settings/general">
+                <div class="form-section">
+                    <h3>Organization Information</h3>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="tenant_name">Organization Name</label>
+                            <input type="text" id="tenant_name" name="name" value="{{ tenant.name }}" required>
+                        </div>
+
+                        {% if not single_tenant_mode %}
+                        <div class="form-group">
+                            <label for="subdomain">Subdomain</label>
+                            <input type="text" id="subdomain" name="subdomain" value="{{ tenant.subdomain }}" readonly>
+                            <small>Cannot be changed after creation</small>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Branding Section -->
+                <div class="form-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #e5e7eb;">
+                    <h3>Branding</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1.5rem;">
+                        Customize the appearance of your admin interface
+                    </p>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Favicon</label>
+                            <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                                Upload a custom favicon or provide a URL. Supported formats: ICO, PNG, SVG (max 1MB)
+                            </p>
+
+                            <!-- Current favicon preview -->
+                            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; padding: 1rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                                <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: white; border: 1px solid #e2e8f0; border-radius: 6px;">
+                                    {% if tenant.favicon_url %}
+                                    <img src="{{ script_name }}{{ tenant.favicon_url }}" alt="Current favicon" style="max-width: 32px; max-height: 32px;">
+                                    {% else %}
+                                    <img src="{{ script_name }}/static/favicons/default/favicon.jpg" alt="Default favicon" style="max-width: 32px; max-height: 32px;">
+                                    {% endif %}
+                                </div>
+                                <div style="flex: 1;">
+                                    {% if tenant.favicon_url %}
+                                    <div style="font-weight: 500; font-size: 0.875rem;">Custom Favicon</div>
+                                    <div style="color: #6b7280; font-size: 0.75rem; word-break: break-all;">{{ tenant.favicon_url }}</div>
+                                    {% else %}
+                                    <div style="font-weight: 500; font-size: 0.875rem;">Default Favicon</div>
+                                    <div style="color: #6b7280; font-size: 0.75rem;">Using the default AdCP favicon</div>
+                                    {% endif %}
+                                </div>
+                                {% if tenant.favicon_url %}
+                                <form method="POST" action="{{ script_name }}/tenant/{{ tenant.tenant_id }}/remove_favicon" style="margin: 0;">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm" onclick="return confirm('Remove custom favicon and use the default?')">
+                                        Remove
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+
+                            <!-- Upload form -->
+                            <div style="margin-bottom: 1rem;">
+                                <form method="POST" action="{{ script_name }}/tenant/{{ tenant.tenant_id }}/upload_favicon" enctype="multipart/form-data" style="display: flex; gap: 0.5rem; align-items: center;">
+                                    <input type="file" name="favicon" accept=".ico,.png,.svg" style="flex: 1;">
+                                    <button type="submit" class="btn btn-secondary btn-sm">Upload</button>
+                                </form>
+                            </div>
+
+                            <!-- URL form -->
+                            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed #e2e8f0;">
+                                <label style="font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem; display: block;">Or provide a URL:</label>
+                                <form method="POST" action="{{ script_name }}/tenant/{{ tenant.tenant_id }}/update_favicon_url" style="display: flex; gap: 0.5rem; align-items: center;">
+                                    <input type="url" name="favicon_url" value="{{ tenant.favicon_url or '' }}" placeholder="https://example.com/favicon.ico" style="flex: 1; padding: 0.5rem; border: 1px solid #e2e8f0; border-radius: 6px;">
+                                    <button type="submit" class="btn btn-secondary btn-sm">Save URL</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Domain Configuration Section -->
+                <div class="form-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #e5e7eb;">
+                    <h3>Domain Configuration</h3>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="virtual_host">Custom Domain (Optional)</label>
+                            <input type="text" id="virtual_host" name="virtual_host" value="{{ tenant.virtual_host or '' }}" placeholder="e.g. sales-agent.yourcompany.com">
+                            <small>
+                                <p style="margin-top: 0.5rem; color: #666; font-size: 0.85em;">
+                                    {% if single_tenant_mode %}
+                                    💡 Set your custom domain and point your DNS A/CNAME record to this server's IP address.
+                                    {% else %}
+                                    💡 Set your custom domain for MCP and admin access. Point your DNS to this deployment's address.
+                                    {% endif %}
+                                </p>
+                            </small>
+                        </div>
+
+                        {% if not single_tenant_mode %}
+                        <!-- DNS Configuration Widget (Approximated - multi-tenant only) -->
+                        <div id="dns-widget-container" style="display: none; margin-top: 1rem; padding: 1rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                            <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">📝 Configure DNS Records</h4>
+                            <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                                Follow the steps below to configure your DNS records. The widget will automatically detect your DNS provider and verify your configuration.
+                            </p>
+
+                            <!-- Success message (hidden by default) -->
+                            <div id="dns-success-message" style="display: none; padding: 1rem; background: #d1fae5; border: 2px solid #10b981; border-radius: 8px; margin-bottom: 1rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <span style="font-size: 1.5rem;">✅</span>
+                                    <div>
+                                        <div style="font-weight: 600; color: #065f46; font-size: 1rem;">DNS Records Verified!</div>
+                                        <div style="color: #047857; font-size: 0.875rem;">Your custom domain is properly configured and routing through the Approximated proxy</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="apxdnswidget"></div>
+                        </div>
+
+                        <!-- Domain Registration Status (Approximated Backend - multi-tenant only) -->
+                        <div id="domain-registration-container" style="display: none; margin-top: 1rem; padding: 1rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+                            <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">🔒 Domain Registration Status</h4>
+                            <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                                Your domain must be registered with the backend to enable HTTPS/TLS and traffic routing.
+                            </p>
+
+                            <!-- Status display -->
+                            <div id="domain-status-display" style="margin-bottom: 1rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; background: white; border: 1px solid #e5e7eb; border-radius: 6px;">
+                                    <span id="domain-status-icon" style="font-size: 1.25rem;">⏳</span>
+                                    <div style="flex: 1;">
+                                        <div style="font-weight: 600; font-size: 0.875rem;" id="domain-status-text">Checking status...</div>
+                                        <div style="color: #6b7280; font-size: 0.75rem;" id="domain-status-details"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Action buttons -->
+                            <div style="display: flex; gap: 0.5rem;">
+                                <button type="button" class="btn btn-secondary btn-sm" id="check-domain-status-btn" onclick="checkDomainRegistrationStatus()">
+                                    Check Status
+                                </button>
+                                <button type="button" class="btn btn-primary btn-sm" id="register-domain-btn" onclick="registerDomain()" style="display: none;">
+                                    Register Domain
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm" id="unregister-domain-btn" onclick="unregisterDomain()" style="display: none;">
+                                    Unregister Domain
+                                </button>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                    </div>
+                </div>
+
+                <!-- Budget & Limits moved to Business Rules section -->
+                <!-- Features moved to Business Rules section -->
+
+                {% if not single_tenant_mode %}
+                <!-- DNS Verification Warning (Approximated - multi-tenant only) -->
+                <div id="dns-warning-banner" style="display: none; margin-bottom: 1rem; padding: 1rem; background: #fef3c7; border: 2px solid #f59e0b; border-radius: 8px;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="font-size: 1.5rem;">⚠️</span>
+                        <div>
+                            <div style="font-weight: 600; color: #92400e; font-size: 1rem;">DNS Records Not Verified</div>
+                            <div style="color: #78350f; font-size: 0.875rem;">Your custom domain DNS records have not been verified yet. The domain may not work until DNS is properly configured.</div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="button-group">
+                    <button type="submit" class="btn btn-primary">Save Account Settings</button>
+                </div>
+            </form>
+
+            <!-- Access Control (Domain & Email Authorization) -->
+            <div class="form-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #e5e7eb;">
+                <h3>🔐 Access Control</h3>
+                <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1.5rem;">
+                    Control who can access this tenant's admin interface
+                </p>
+
+                <!-- Authorized Domains -->
+                <div style="margin-bottom: 2rem;">
+                    <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">🏢 Authorized Domains</h4>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Users from these domains get automatic admin access via OAuth
+                    </p>
+
+                    {% if authorized_domains %}
+                    <div class="domain-list" style="margin-bottom: 1rem;">
+                        {% for domain in authorized_domains %}
+                        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 0.5rem;">
+                            <div style="flex: 1;">
+                                <strong>{{ domain }}</strong>
+                                <small style="color: #6b7280; margin-left: 0.5rem;">@{{ domain }} users</small>
+                            </div>
+                            <form method="POST" action="{{ url_for('settings.remove_authorized_domain', tenant_id=tenant.tenant_id) }}" style="margin: 0;">
+                                <input type="hidden" name="domain" value="{{ domain }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm"
+                                        onclick="return confirm('Remove domain {{ domain }}? Users from this domain will lose access.')">Remove</button>
+                            </form>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div style="text-align: center; color: #9ca3af; font-style: italic; margin-bottom: 1rem; padding: 1rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+                        No authorized domains configured
+                    </div>
+                    {% endif %}
+
+                    <form method="POST" action="{{ url_for('settings.add_authorized_domain', tenant_id=tenant.tenant_id) }}" style="display: flex; gap: 0.5rem; align-items: end;">
+                        <div style="flex: 1;">
+                            <label for="new_domain" style="font-size: 0.875rem; font-weight: 500;">Add Domain</label>
+                            <input type="text" id="new_domain" name="domain" placeholder="company.com" style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Add Domain</button>
+                    </form>
+                </div>
+
+                <!-- Authorized Emails -->
+                <div>
+                    <h4 style="font-size: 1rem; margin-bottom: 0.5rem;">📧 Authorized Emails</h4>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        External users requiring explicit access (contractors, agencies, etc.)
+                    </p>
+
+                    {% if authorized_emails %}
+                    <div class="email-list" style="margin-bottom: 1rem;">
+                        {% for email in authorized_emails %}
+                        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; background: #fef7ec; border: 1px solid #fed7aa; border-radius: 6px; margin-bottom: 0.5rem;">
+                            <div style="flex: 1;">
+                                <strong>{{ email }}</strong>
+                                <small style="color: #92400e; margin-left: 0.5rem;">External user</small>
+                            </div>
+                            <form method="POST" action="{{ url_for('settings.remove_authorized_email', tenant_id=tenant.tenant_id) }}" style="margin: 0;">
+                                <input type="hidden" name="email" value="{{ email }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm"
+                                        onclick="return confirm('Remove {{ email }}? This user will lose access.')">Remove</button>
+                            </form>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div style="text-align: center; color: #9ca3af; font-style: italic; margin-bottom: 1rem; padding: 1rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+                        No external emails configured
+                    </div>
+                    {% endif %}
+
+                    <form method="POST" action="{{ url_for('settings.add_authorized_email', tenant_id=tenant.tenant_id) }}" style="display: flex; gap: 0.5rem; align-items: end;">
+                        <div style="flex: 1;">
+                            <label for="new_email" style="font-size: 0.875rem; font-weight: 500;">Add Email</label>
+                            <input type="email" id="new_email" name="email" placeholder="contractor@agency.com" style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Add Email</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ad Server Settings -->
+        <div id="adserver" class="settings-section">
+            <div class="settings-header">
+                <h2>Ad Server Configuration</h2>
+                <p>Connect and configure your ad serving platform</p>
+            </div>
+
+            {% if active_adapter %}
+            <div class="status-card success">
+                <strong>✅ Connected to {{ active_adapter|title|replace('_', ' ') }}</strong>
+            </div>
+            {% else %}
+            <div class="status-card warning">
+                <strong>⚠️ No Ad Server Connected</strong>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.75rem;">
+                    Select an ad server below to get started
+                </p>
+            </div>
+            {% endif %}
+
+            <div class="form-section">
+                <h3>Available Ad Servers</h3>
+                <div class="adapter-cards">
+                    <div class="adapter-card {% if active_adapter == 'mock' %}current{% endif %}"
+                         onclick="selectAdapter('mock')">
+                        {% if active_adapter == 'mock' %}
+                        <span class="adapter-badge">Current</span>
+                        {% endif %}
+                        <h4>Mock (Testing)</h4>
+                        <p>Perfect for development and testing. No external setup required.</p>
+                    </div>
+
+                    <div id="gam-adapter-card" class="adapter-card {% if active_adapter == 'google_ad_manager' %}current{% endif %}"
+                         onclick="selectGAMAdapter()">
+                        {% if active_adapter == 'google_ad_manager' %}
+                        <span class="adapter-badge">Current</span>
+                        {% endif %}
+                        <h4>Google Ad Manager</h4>
+                        <p>Enterprise ad serving platform from Google</p>
+                        <div id="gam-prerequisite-notice" class="prerequisite-notice" style="display: none;">
+                            OAuth setup required in super admin settings
+                        </div>
+                    </div>
+
+                    <div class="adapter-card {% if active_adapter == 'kevel' %}current{% endif %}"
+                         onclick="selectAdapter('kevel')">
+                        {% if active_adapter == 'kevel' %}
+                        <span class="adapter-badge">Current</span>
+                        {% endif %}
+                        <h4>Kevel</h4>
+                        <p>API-first ad serving for developers</p>
+                    </div>
+
+                    <div class="adapter-card {% if active_adapter == 'broadstreet' %}current{% endif %}"
+                         onclick="selectAdapter('broadstreet')">
+                        {% if active_adapter == 'broadstreet' %}
+                        <span class="adapter-badge">Current</span>
+                        {% endif %}
+                        <h4>Broadstreet Ads</h4>
+                        <p>Simple ad serving for local publishers</p>
+                    </div>
+
+                    <div class="adapter-card {% if active_adapter == 'triton' %}current{% endif %}"
+                         onclick="selectAdapter('triton')">
+                        {% if active_adapter == 'triton' %}
+                        <span class="adapter-badge">Current</span>
+                        {% endif %}
+                        <h4>Triton Digital</h4>
+                        <p>Audio and podcast advertising platform</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Adapter-specific configuration loaded from adapter templates -->
+            <div id="adapter-config">
+                {% if active_adapter %}
+                {% include "adapters/" ~ active_adapter ~ "/connection_config.html" ignore missing %}
+                {% endif %}
+
+                {# LEGACY: Keep original GAM config as fallback until fully migrated #}
+                {% if active_adapter == 'google_ad_manager' and false %}{# Disabled - using adapter template #}
+                <div class="form-section" style="margin-top: 2rem;">
+                    <h3>Google Ad Manager Configuration</h3>
+
+                    {% if not gam_oauth_configured %}
+                    <!-- Warning: GAM OAuth environment variables not set -->
+                    <div class="status-card" style="background: #fef3c7; border-left: 4px solid #f59e0b; margin-bottom: 1.5rem;">
+                        <h4 style="margin: 0 0 0.5rem 0;">⚠️ GAM OAuth Not Configured</h4>
+                        <p style="margin: 0 0 0.75rem 0; font-size: 0.875rem;">
+                            OAuth authentication requires environment variables that are not currently set.
+                        </p>
+                        <p style="margin: 0 0 0.5rem 0; font-size: 0.875rem;"><strong>To enable OAuth authentication:</strong></p>
+                        <ol style="margin: 0 0 0.75rem 1.5rem; padding: 0; font-size: 0.875rem;">
+                            <li>Create OAuth credentials at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: #2563eb;">Google Cloud Console</a></li>
+                            <li>Add redirect URI: <code style="background: #e5e7eb; padding: 0.125rem 0.25rem; border-radius: 3px;">{{ request.url_root }}tenant/callback/gam</code></li>
+                            <li>Add to <code style="background: #e5e7eb; padding: 0.125rem 0.25rem; border-radius: 3px;">.env</code> file:<br>
+                                <code style="display: block; background: #1f2937; color: #f3f4f6; padding: 0.5rem; border-radius: 4px; margin-top: 0.25rem; font-size: 0.8rem;">GAM_OAUTH_CLIENT_ID=your-client-id<br>GAM_OAUTH_CLIENT_SECRET=your-client-secret</code>
+                            </li>
+                            <li>Restart services: <code style="background: #e5e7eb; padding: 0.125rem 0.25rem; border-radius: 3px;">docker-compose restart</code></li>
+                        </ol>
+                        <p style="margin: 0; font-size: 0.875rem;">
+                            <strong>Alternative:</strong> Use Service Account authentication below - no OAuth setup required.
+                        </p>
+                    </div>
+                    {% endif %}
+
+                    {% if adapter_config and adapter_config.get('refresh_token') and adapter_config.get('network_code') %}
+                    <!-- Fully configured - show success state -->
+                    <div class="status-card" style="background: #f0fdf4; border-left: 4px solid #10b981;">
+                        <!-- Hidden fields for JS operations -->
+                        <input type="hidden" id="gam_refresh_token" value="{{ adapter_config.get('refresh_token') }}">
+                        <input type="hidden" id="gam_network_code" value="{{ adapter_config.get('network_code') }}">
+                        <input type="hidden" id="gam_trafficker_id" value="{{ adapter_config.get('trafficker_id') }}">
+
+                        <h4>✅ Configuration Complete</h4>
+                        <ul style="list-style: none; padding: 0; margin: 0.5rem 0;">
+                            <li>✅ OAuth Token: Configured</li>
+                            <li>✅ Network Code: {{ adapter_config.get('network_code') }}</li>
+                            {% if adapter_config.get('trafficker_id') %}
+                            <li>✅ Trafficker ID: {{ adapter_config.get('trafficker_id') }}</li>
+                            {% endif %}
+                            {% if adapter_config.get('network_currency') %}
+                            <li>💱 Network Currency: {{ adapter_config.get('network_currency') }}</li>
+                            {% endif %}
+                            {% if adapter_config.get('secondary_currencies') %}
+                            <li>💱 Secondary Currencies: {{ adapter_config.get('secondary_currencies')|join(', ') }}</li>
+                            {% endif %}
+                            {% if adapter_config.get('network_timezone') %}
+                            <li>🕐 Network Timezone: {{ adapter_config.get('network_timezone') }}</li>
+                            {% endif %}
+                        </ul>
+                        <div style="margin-top: 0.5rem;">
+                            <button onclick="testGAMConnection()" class="btn btn-secondary btn-sm">
+                                Test Connection
+                            </button>
+                            <button onclick="refreshGAMInfo()" class="btn btn-secondary btn-sm" style="margin-left: 0.5rem;">
+                                Refresh GAM Info
+                            </button>
+                            <button onclick="initiateGAMAuth()" class="btn btn-secondary btn-sm" style="margin-left: 0.5rem;">
+                                Refresh OAuth Token
+                            </button>
+                            <button onclick="editGAMConfig()" class="btn btn-warning btn-sm" style="margin-left: 0.5rem;">
+                                Edit Configuration
+                            </button>
+                        </div>
+                    </div>
+                    {% else %}
+                    <!-- Not configured or partially configured -->
+
+                    <!-- Step 1: Get OAuth Token -->
+                    <div class="form-group">
+                        <label><strong>Step 1:</strong> Get OAuth Token</label>
+                        {% if adapter_config and adapter_config.get('refresh_token') %}
+                        <div class="status-card" style="background: #f0fdf4; border-left: 4px solid #10b981;">
+                            <strong>✅ OAuth Token Configured</strong>
+                            <p>Your refresh token is active.</p>
+                            <button onclick="initiateGAMAuth()" class="btn btn-secondary btn-sm" style="margin-top: 0.5rem;">
+                                Refresh OAuth Token
+                            </button>
+                        </div>
+                        {% else %}
+                        <div class="status-card" style="background: #fef3c7; border-left: 4px solid #f59e0b;">
+                            <strong>⚠️ OAuth Setup Required</strong>
+                            <p>Click the button below to authorize AdCP access to your Google Ad Manager account.</p>
+                            <button onclick="initiateGAMAuth()" class="btn btn-primary" style="margin-top: 0.5rem;">
+                                🔑 Get OAuth Token
+                            </button>
+                        </div>
+                        {% endif %}
+
+                        <!-- Advanced option for manual token entry -->
+                        <details style="margin-top: 1rem;">
+                            <summary style="cursor: pointer; color: #666; font-size: 0.9em;">▸ Advanced: Manual Token Entry</summary>
+                            <div style="margin-top: 0.5rem; padding: 1rem; background: #f8f9fa; border-radius: 4px;">
+                                <label for="gam_refresh_token">Manual OAuth Refresh Token</label>
+                                <input type="text" id="gam_refresh_token" class="form-control"
+                                       value="{{ adapter_config.get('refresh_token', '') if adapter_config else '' }}"
+                                       placeholder="Paste your OAuth refresh token here">
+                                <small class="form-text text-muted">For advanced users: manually enter a refresh token if you have one.</small>
+                                <button onclick="saveManualToken()" class="btn btn-primary" style="margin-top: 0.5rem;">
+                                    Save Token
+                                </button>
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- Step 2: Auto-detect Network (only show if token exists) -->
+                    {% if adapter_config and adapter_config.get('refresh_token') %}
+                    <div class="form-group" style="margin-top: 1.5rem;">
+                        <label><strong>Step 2:</strong> Auto-detect Network Code</label>
+                        {% if adapter_config.get('network_code') %}
+                        <div class="status-card" style="background: #f0fdf4; border-left: 4px solid #10b981;">
+                            <strong>✅ Network Code Detected: {{ adapter_config.get('network_code') }}</strong>
+                            {% if adapter_config.get('trafficker_id') %}
+                            <p>Trafficker ID: {{ adapter_config.get('trafficker_id') }}</p>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <div style="display: flex; gap: 0.5rem; align-items: start;">
+                            <div style="flex: 1;">
+                                <input type="text" id="gam_network_code" class="form-control"
+                                       value="{{ adapter_config.get('network_code', '') if adapter_config else '' }}"
+                                       placeholder="Enter network code or click auto-detect">
+                            </div>
+                            <button onclick="detectGAMNetwork()" class="btn btn-primary" id="detect-network-btn">
+                                Auto-detect Network
+                            </button>
+                        </div>
+                        <small class="form-text text-muted">Enter your GAM network code manually (found in GAM Admin → Network settings), or use auto-detect to retrieve it automatically.</small>
+
+                        <div style="margin-top: 1rem;">
+                            <label for="gam_trafficker_id" class="form-label">Trafficker ID (optional)</label>
+                            <input type="text" id="gam_trafficker_id" class="form-control"
+                                   value="{{ adapter_config.get('trafficker_id', '') if adapter_config else '' }}"
+                                   placeholder="Auto-detected or enter manually">
+                            <small class="form-text text-muted">Your GAM user ID for order trafficking. Auto-detected during network detection, or find it in GAM Admin → Users.</small>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    {% endif %}
+
+                    <!-- Service Account Integration Option -->
+                    <div class="form-section" style="margin-top: 2rem; padding-top: 2rem; border-top: 2px solid #e5e7eb; {% if not gam_oauth_configured %}background: #f0fdf4; padding: 1.5rem; border-radius: 8px; border: 2px solid #10b981;{% endif %}">
+                        <h3>
+                            🔧 {% if not gam_oauth_configured %}Recommended: {% endif %}Service Account Integration
+                            {% if not gam_oauth_configured %}
+                            <span style="background: #10b981; color: white; font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; vertical-align: middle;">No OAuth Setup Required</span>
+                            {% endif %}
+                        </h3>
+                        <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                            {% if not gam_oauth_configured %}
+                            Service accounts provide secure, non-expiring authentication without OAuth setup. This is the recommended option.
+                            {% elif single_tenant_mode %}
+                            Service accounts provide secure, non-expiring authentication. Create a service account in your GCP project and configure it here.
+                            {% else %}
+                            For partner integrations, we can create and manage a service account for you. This is more secure and doesn't require sharing credentials.
+                            {% endif %}
+                        </p>
+
+                        {% if adapter_config and adapter_config.get('service_account_email') %}
+                        <!-- Service account already created -->
+                        <div class="status-card" style="background: #f0fdf4; border-left: 4px solid #10b981;">
+                            <h4>✅ Service Account Created</h4>
+                            <p style="margin: 0.5rem 0;">
+                                <strong>Service Account Email:</strong><br>
+                                <code style="background: #e5e7eb; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.9em;">{{ adapter_config.get('service_account_email') }}</code>
+                            </p>
+                            <div style="margin-top: 1rem; padding: 1rem; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 4px;">
+                                <p style="margin: 0; font-size: 0.875rem;"><strong>⚠️ Next Steps:</strong></p>
+                                <ol style="margin: 0.5rem 0 0 1.5rem; padding: 0; font-size: 0.875rem;">
+                                    <li>Log into your Google Ad Manager account</li>
+                                    <li>Go to <strong>Admin → Access & authorization → Users</strong></li>
+                                    <li>Click <strong>New user</strong></li>
+                                    <li>Add the service account email above</li>
+                                    <li>Assign the <strong>Trafficker</strong> role</li>
+                                    <li>Click <strong>Save</strong></li>
+                                    <li>Enter your GAM Network Code below</li>
+                                    <li>Click "Save Network Code"</li>
+                                    <li>Click "Test Connection" to verify</li>
+                                </ol>
+                            </div>
+
+                            <!-- Network Code Configuration -->
+                            <div style="margin-top: 1.5rem;">
+                                <label style="font-weight: 600; font-size: 0.875rem; display: block; margin-bottom: 0.5rem;">
+                                    GAM Network Code <span style="color: #dc2626;">*</span>
+                                </label>
+                                {% if adapter_config.get('network_code') %}
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <input type="text" id="service_account_network_code"
+                                           value="{{ adapter_config.get('network_code') }}"
+                                           style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace;"
+                                           placeholder="e.g., 12345678">
+                                    <button onclick="saveServiceAccountNetworkCode()" class="btn btn-primary btn-sm">
+                                        Save Network Code
+                                    </button>
+                                </div>
+                                <small style="color: #10b981; display: block; margin-top: 0.25rem;">✅ Network code configured</small>
+                                {% else %}
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <input type="text" id="service_account_network_code"
+                                           style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace;"
+                                           placeholder="e.g., 12345678">
+                                    <button onclick="saveServiceAccountNetworkCode()" class="btn btn-primary btn-sm">
+                                        Save Network Code
+                                    </button>
+                                </div>
+                                <small style="color: #6b7280; display: block; margin-top: 0.25rem;">
+                                    Find this in GAM under Admin → Global Settings → Network Code
+                                </small>
+                                {% endif %}
+                            </div>
+
+                            <div style="margin-top: 1rem;">
+                                <button onclick="testGAMServiceAccountConnection()" class="btn btn-primary btn-sm"
+                                        {% if not adapter_config.get('network_code') %}disabled title="Save network code first"{% endif %}>
+                                    Test Connection
+                                </button>
+                                <button onclick="copyServiceAccountEmail()" class="btn btn-secondary btn-sm" style="margin-left: 0.5rem;">
+                                    📋 Copy Email
+                                </button>
+                            </div>
+                        </div>
+                        {% else %}
+                        <!-- No service account yet -->
+                        <div class="status-card" style="background: #f9fafb; border-left: 4px solid #9ca3af;">
+                            {% if single_tenant_mode %}
+                            <p style="margin: 0 0 1rem 0; font-size: 0.875rem;">
+                                To use a service account, create one in your GCP project and download the JSON key file.
+                                Then add the service account email as a user in Google Ad Manager with the Trafficker role.
+                            </p>
+                            <p style="margin: 0 0 1.5rem 0; font-size: 0.875rem; color: #6b7280;">
+                                See the <a href="https://developers.google.com/ad-manager/api/start" target="_blank">GAM API documentation</a> for setup instructions.
+                            </p>
+
+                            <!-- Service Account JSON Key Input -->
+                            <div style="margin-top: 1rem;">
+                                <label style="font-weight: 600; font-size: 0.875rem; display: block; margin-bottom: 0.5rem;">
+                                    Service Account JSON Key <span style="color: #dc2626;">*</span>
+                                </label>
+                                <textarea id="manual_service_account_json"
+                                          style="width: 100%; min-height: 150px; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace; font-size: 0.75rem;"
+                                          placeholder='Paste your service account JSON key here (the contents of the .json file downloaded from GCP)'></textarea>
+                                <small style="color: #6b7280; display: block; margin-top: 0.25rem;">
+                                    The full contents of your GCP service account JSON key file
+                                </small>
+                            </div>
+
+                            <!-- Network Code Input -->
+                            <div style="margin-top: 1rem;">
+                                <label style="font-weight: 600; font-size: 0.875rem; display: block; margin-bottom: 0.5rem;">
+                                    GAM Network Code <span style="color: #dc2626;">*</span>
+                                </label>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <input type="text" id="manual_network_code"
+                                           style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font-family: monospace;"
+                                           placeholder="e.g., 12345678">
+                                </div>
+                                <small style="color: #6b7280; display: block; margin-top: 0.25rem;">
+                                    Find this in GAM under Admin → Global Settings → Network Code
+                                </small>
+                            </div>
+
+                            <div style="margin-top: 1.5rem;">
+                                <button onclick="saveManualServiceAccount()" class="btn btn-primary">
+                                    Save Service Account Configuration
+                                </button>
+                            </div>
+                            {% else %}
+                            <p style="margin: 0 0 1rem 0; font-size: 0.875rem;">
+                                We'll create a service account in our GCP project and provide you with the email address. You then add this email as a user in your Google Ad Manager with the Trafficker role.
+                            </p>
+                            <button onclick="createServiceAccount()" class="btn btn-success" id="create-service-account-btn">
+                                🔑 Create Service Account
+                            </button>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Save button - only show when NOT fully configured -->
+                    {% if not (adapter_config and adapter_config.get('refresh_token') and adapter_config.get('network_code')) %}
+                    <div class="form-group" style="margin-top: 2rem;">
+                        {% if adapter_config and adapter_config.get('refresh_token') %}
+                        <button onclick="saveGAMConfig()" class="btn btn-primary">Save Configuration</button>
+                        {% else %}
+                        <button onclick="saveGAMConfig()" class="btn btn-primary" disabled title="Get OAuth token first">
+                            Save Configuration
+                        </button>
+                        <small class="form-text text-muted">Complete Step 1 to enable saving</small>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% elif active_adapter == 'mock' and false %}{# Disabled - using adapter template #}
+                <div class="form-section" style="margin-top: 2rem;">
+                    <div class="alert alert-info">
+                        <strong>Mock Adapter Active</strong>
+                        <p>The mock adapter is configured and ready for testing. No additional setup required.</p>
+                    </div>
+                </div>
+                {% endif %}{# End legacy adapter config #}
+            </div>
+        </div>
+
+        <!-- Policies & Workflows Section -->
+        <div id="business-rules" class="settings-section">
+            <div class="settings-header">
+                <h2>Policies & Workflows</h2>
+                <p>Configure how your organization operates: budgets, naming conventions, approval workflows</p>
+            </div>
+
+            <form id="business-rules-form">
+                <!-- Budget Controls -->
+                <div class="form-section">
+                    <h3>Budget Controls</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Configure budget limits per currency. At least one currency is required for media buys.
+                    </p>
+
+                    {% if adapter_config and adapter_config.get('network_currency') %}
+                    <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem;">
+                        <strong style="color: #1e40af;">GAM Network Currencies:</strong>
+                        <span style="color: #1e3a8a;">{{ adapter_config.get('network_currency') }}</span>
+                        {% if adapter_config.get('secondary_currencies') %}
+                            {% for currency in adapter_config.get('secondary_currencies') %}
+                            , <span style="color: #1e3a8a;">{{ currency }}</span>
+                            {% endfor %}
+                        {% endif %}
+                        <small style="display: block; color: #3b82f6; margin-top: 0.25rem;">
+                            These currencies are enabled in your GAM network and can be used for orders.
+                        </small>
+                    </div>
+                    {% endif %}
+
+                    <!-- Currency Limits Management -->
+                    <div id="currency-limits-container" style="margin-bottom: 1.5rem;">
+                        {% if currency_limits %}
+                            {% for limit in currency_limits %}
+                            <div class="currency-limit-item" data-currency="{{ limit.currency_code }}" style="display: flex; align-items: start; gap: 1rem; margin-bottom: 1rem; padding: 1rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;">
+                                <div style="flex: 1;">
+                                    <div style="display: grid; grid-template-columns: 150px 1fr 1fr; gap: 1rem; align-items: center;">
+                                        <!-- Currency Code -->
+                                        <div>
+                                            <label style="display: block; font-weight: 600; color: #1f2937; margin-bottom: 0.25rem;">Currency</label>
+                                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                                <input type="text" readonly value="{{ limit.currency_code }}"
+                                                       style="padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; background: #f3f4f6; width: 80px; font-weight: 600;">
+                                                {% if adapter_config and adapter_config.get('network_currency') %}
+                                                    {% set gam_currencies = [adapter_config.get('network_currency')] + (adapter_config.get('secondary_currencies') or []) %}
+                                                    {% if limit.currency_code not in gam_currencies %}
+                                                    <span style="background: #fef3c7; color: #92400e; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; white-space: nowrap;" title="This currency is not enabled in your GAM network">
+                                                        Not in GAM
+                                                    </span>
+                                                    {% endif %}
+                                                {% endif %}
+                                            </div>
+                                        </div>
+
+                                        <!-- Min Package Budget -->
+                                        <div>
+                                            <label style="display: block; font-size: 0.875rem; color: #4b5563; margin-bottom: 0.25rem;">
+                                                Min Package Budget
+                                            </label>
+                                            <input type="number"
+                                                   name="currency_limits[{{ limit.currency_code }}][min_package_budget]"
+                                                   value="{{ limit.min_package_budget or '' }}"
+                                                   min="0" step="0.01"
+                                                   placeholder="No minimum"
+                                                   style="padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; width: 100%;">
+                                        </div>
+
+                                        <!-- Max Daily Package Spend -->
+                                        <div>
+                                            <label style="display: block; font-size: 0.875rem; color: #4b5563; margin-bottom: 0.25rem;">
+                                                Max Daily Package Spend
+                                            </label>
+                                            <input type="number"
+                                                   name="currency_limits[{{ limit.currency_code }}][max_daily_package_spend]"
+                                                   value="{{ limit.max_daily_package_spend or '' }}"
+                                                   min="0" step="0.01"
+                                                   placeholder="No maximum"
+                                                   style="padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; width: 100%;">
+                                        </div>
+                                    </div>
+                                    <small style="display: block; color: #6b7280; margin-top: 0.5rem;">
+                                        Limits apply per package/line item to prevent budget splitting
+                                    </small>
+                                </div>
+
+                                <!-- Delete Button -->
+                                <button type="button" class="btn btn-sm btn-danger" onclick="removeCurrencyLimit('{{ limit.currency_code }}')" title="Remove Currency">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                                <input type="hidden" name="currency_limits[{{ limit.currency_code }}][_delete]" value="false">
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <!-- Empty state - no currencies configured -->
+                            <div style="padding: 2rem; text-align: center; background: #f9fafb; border: 2px dashed #d1d5db; border-radius: 8px; margin-bottom: 1rem;">
+                                <i class="fas fa-coins" style="font-size: 2rem; color: #9ca3af; margin-bottom: 0.5rem;"></i>
+                                <p style="color: #6b7280; margin: 0; font-size: 0.95rem;">
+                                    <strong>No currencies configured</strong><br>
+                                    Click "Add Currency" below to configure your first currency for media buys.
+                                </p>
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Add Currency Button -->
+                    <div style="margin-bottom: 1.5rem;">
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="showAddCurrencyModal()">
+                            <i class="fas fa-plus"></i> Add Currency
+                        </button>
+                        <small style="display: block; color: #6b7280; margin-top: 0.5rem;">
+                            Supports international advertisers. Common currencies: USD, EUR, GBP, CAD, AUD, JPY
+                        </small>
+                    </div>
+                </div>
+
+                <!-- Brand Manifest Policy -->
+                <div class="form-section">
+                    <h3>Brand Manifest Policy</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Control when advertisers must provide brand information (<code>brand_manifest</code>) when discovering products or creating campaigns.
+                    </p>
+                    <div class="form-group">
+                        <label for="brand_manifest_policy">Brand Context Requirement</label>
+                        <select id="brand_manifest_policy" name="brand_manifest_policy" class="form-control">
+                            <option value="require_auth" {% if tenant.brand_manifest_policy == 'require_auth' or not tenant.brand_manifest_policy %}selected{% endif %}>
+                                🔐 Require Authentication (brand_manifest optional)
+                            </option>
+                            <option value="require_brand" {% if tenant.brand_manifest_policy == 'require_brand' %}selected{% endif %}>
+                                🔒 Require Authentication + Brand Manifest (strictest)
+                            </option>
+                            <option value="public" {% if tenant.brand_manifest_policy == 'public' %}selected{% endif %}>
+                                🌐 Public (no authentication, no pricing shown)
+                            </option>
+                        </select>
+                        <details style="margin-top: 0.5rem;">
+                            <summary style="cursor: pointer; color: #666; font-size: 0.875rem;">About these options</summary>
+                            <div style="margin-top: 0.5rem; padding: 0.75rem; background: #f8f9fa; border-radius: 4px; font-size: 0.875rem;">
+                                <p style="margin: 0 0 0.75rem;"><strong>🔐 Require Authentication</strong> (Recommended for most publishers)</p>
+                                <ul style="margin: 0 0 1rem 1.5rem;">
+                                    <li>Advertisers must authenticate to see products</li>
+                                    <li><code>brand_manifest</code> is <strong>optional</strong></li>
+                                    <li>Pricing shown to authenticated users</li>
+                                    <li>Best for: Standard B2B sales, testing environments</li>
+                                </ul>
+
+                                <p style="margin: 0 0 0.75rem;"><strong>🔒 Require Authentication + Brand Manifest</strong> (Strictest)</p>
+                                <ul style="margin: 0 0 1rem 1.5rem;">
+                                    <li>Advertisers must authenticate AND provide brand context</li>
+                                    <li><code>brand_manifest</code> is <strong>required</strong></li>
+                                    <li>Pricing shown only with brand context</li>
+                                    <li>Best for: Bespoke products requiring brand-specific customization</li>
+                                </ul>
+
+                                <p style="margin: 0 0 0.75rem;"><strong>🌐 Public</strong> (Most open)</p>
+                                <ul style="margin: 0 0 0; 1.5rem;">
+                                    <li>No authentication required</li>
+                                    <li><code>brand_manifest</code> optional</li>
+                                    <li>Pricing <strong>hidden</strong> (generic catalog only)</li>
+                                    <li>Best for: Public product browsing, lead generation</li>
+                                </ul>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+
+                <!-- Naming Conventions -->
+                <div class="form-section">
+                    <h3>Naming Conventions</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Configure how orders and line items are named. <strong>Works across all ad servers</strong> (GAM, Mock, Kevel).
+                    </p>
+
+                    <!-- Adapter Support Indicator -->
+                    <div class="alert alert-info" style="font-size: 0.875rem; padding: 0.75rem; margin-bottom: 1.5rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px;">
+                        <strong>Adapter Support:</strong>
+                        ✅ Google Ad Manager &nbsp;&nbsp;
+                        ✅ Mock Adapter &nbsp;&nbsp;
+                        ⏳ Kevel (coming soon)
+                    </div>
+
+                    <!-- Quick Start Presets -->
+                    <div class="form-group">
+                        <label>Quick Start Templates</label>
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="useNamingPreset('simple')">
+                                📊 Simple
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="useNamingPreset('campaign')">
+                                🎯 Campaign-First
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="useNamingPreset('detailed')">
+                                📅 Detailed
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Order Name Template -->
+                    <div class="form-group">
+                        <label for="order_name_template">Order Name Template</label>
+                        <input type="text" id="order_name_template" name="order_name_template"
+                               value="{{ tenant.order_name_template or '{campaign_name|promoted_offering} - {date_range}' }}"
+                               placeholder="{campaign_name|promoted_offering} - {date_range}"
+                               oninput="updateNamingPreview()">
+                        <details style="margin-top: 0.5rem;">
+                            <summary style="cursor: pointer; color: #666; font-size: 0.875rem;">Show available variables</summary>
+                            <div style="margin-top: 0.5rem; padding: 0.75rem; background: #f8f9fa; border-radius: 4px; font-size: 0.875rem;">
+                                <strong>Available variables:</strong>
+                                <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
+                                    <li><code>{campaign_name}</code> - Campaign name (optional - may be empty)</li>
+                                    <li><code>{promoted_offering}</code> - What's being advertised (always present)</li>
+                                    <li><code>{buyer_ref}</code> - Buyer's internal reference (optional)</li>
+                                    <li><code>{auto_name}</code> - 🤖 AI-generated name from full context (requires Gemini API key)</li>
+                                    <li><code>{date_range}</code> - Flight dates (e.g., "Oct 7-14, 2025")</li>
+                                    <li><code>{month_year}</code> - Month and year (e.g., "Oct 2025")</li>
+                                    <li><code>{package_count}</code> - Number of packages in order</li>
+                                </ul>
+                                <strong>Fallback syntax:</strong> <code>{var1|var2}</code> uses var1 if present, otherwise var2
+                                <br><strong>Example:</strong> <code>{campaign_name|promoted_offering}</code> tries campaign_name first, falls back to promoted_offering
+                                <br><strong>AI Naming:</strong> <code>{auto_name}</code> generates smart, concise names (~500ms). Falls back to promoted_offering if Gemini unavailable.
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- Line Item Name Template -->
+                    <div class="form-group">
+                        <label for="line_item_name_template">Line Item Name Template</label>
+                        <input type="text" id="line_item_name_template" name="line_item_name_template"
+                               value="{{ tenant.line_item_name_template or '{order_name} - {product_name}' }}"
+                               placeholder="{order_name} - {product_name}"
+                               oninput="updateNamingPreview()">
+                        <details style="margin-top: 0.5rem;">
+                            <summary style="cursor: pointer; color: #666; font-size: 0.875rem;">Show available variables</summary>
+                            <div style="margin-top: 0.5rem; padding: 0.75rem; background: #f8f9fa; border-radius: 4px; font-size: 0.875rem;">
+                                <strong>Available variables:</strong>
+                                <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
+                                    <li><code>{product_name}</code> - Product/inventory name (e.g., "Display 300x250")</li>
+                                    <li><code>{order_name}</code> - Parent order name (provides campaign context)</li>
+                                    <li><code>{package_index}</code> - Package position number (1, 2, 3...)</li>
+                                </ul>
+                                <strong>Tip:</strong> Including <code>{order_name}</code> helps identify campaigns in line-item reports
+                            </div>
+                        </details>
+                    </div>
+
+                    <!-- Live Preview -->
+                    <div class="form-group" style="margin-top: 1.5rem;">
+                        <label>Preview with Sample Data</label>
+                        <div id="naming-preview" style="padding: 1rem; background: #f0f9ff; border: 1px solid #bfdbfe; border-radius: 8px;">
+                            <div style="margin-bottom: 0.75rem;">
+                                <strong style="color: #1e40af;">Order Name:</strong>
+                                <div id="order-preview" style="padding: 0.5rem; background: white; border-radius: 4px; margin-top: 0.25rem; font-family: monospace; color: #059669;">
+                                    Nike Shoes Q1 - Oct 7-14, 2025
+                                </div>
+                            </div>
+                            <div>
+                                <strong style="color: #1e40af;">Line Item Names:</strong>
+                                <div id="lineitem-preview" style="padding: 0.5rem; background: white; border-radius: 4px; margin-top: 0.25rem; font-family: monospace; color: #059669;">
+                                    1. Nike Shoes Q1 - Oct 7-14, 2025 - Display 300x250<br>
+                                    2. Nike Shoes Q1 - Oct 7-14, 2025 - Video Pre-roll<br>
+                                    3. Nike Shoes Q1 - Oct 7-14, 2025 - Native Article
+                                </div>
+                            </div>
+                            <div id="validation-messages" style="margin-top: 0.75rem; font-size: 0.875rem;">
+                                <!-- Validation messages will appear here -->
+                            </div>
+                            <small style="color: #64748b; display: block; margin-top: 0.5rem;">
+                                Using sample: campaign_name=null, promoted_offering="Nike Shoes Q1", dates=Oct 7-14, 2025, 3 products
+                            </small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Measurement Providers -->
+                <div class="form-section">
+                    <h3>Measurement Providers</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Configure measurement providers that will be available when creating products. The default provider will be pre-selected in product forms.
+                    </p>
+
+                    <div id="measurement-providers-container" style="margin-bottom: 1rem;">
+                        <!-- Hidden field to ensure measurement_providers are always validated -->
+                        <input type="hidden" name="_measurement_providers_section" value="present">
+                        {% set providers = tenant.measurement_providers.providers if tenant.measurement_providers else [] %}
+                        {% set default = tenant.measurement_providers.default if tenant.measurement_providers else '' %}
+                        {% if providers %}
+                            {% for provider in providers %}
+                            <div class="measurement-provider-item" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; padding: 0.5rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px;">
+                                <input type="radio" name="default_measurement_provider" value="{{ provider }}"
+                                       {% if provider == default %}checked{% endif %}
+                                       onchange="markDefaultProvider(this)">
+                                <input type="text" value="{{ provider }}" class="provider-name-input"
+                                       style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px;"
+                                       placeholder="e.g., Google Ad Manager with IAS">
+                                <button type="button" class="btn btn-sm btn-secondary" onclick="removeProvider(this)" title="Remove">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <!-- Empty state - no providers configured -->
+                            <div style="padding: 1.5rem; text-align: center; background: #f9fafb; border: 2px dashed #d1d5db; border-radius: 8px; margin-bottom: 0.5rem;">
+                                <i class="fas fa-chart-line" style="font-size: 1.5rem; color: #9ca3af; margin-bottom: 0.5rem;"></i>
+                                <p style="color: #6b7280; margin: 0; font-size: 0.9rem;">
+                                    <strong>No measurement providers configured</strong><br>
+                                    Click "Add Provider" below to add your first measurement provider.
+                                </p>
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="addMeasurementProvider()">
+                        <i class="fas fa-plus"></i> Add Provider
+                    </button>
+
+                    <small style="display: block; color: #6b7280; margin-top: 0.5rem;">
+                        Click the radio button to set a provider as default. The default provider will be pre-selected when creating products.
+                    </small>
+                </div>
+
+                <!-- Approval Workflow -->
+                <div class="form-section">
+                    <h3>Approval Workflow</h3>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="human_review_required" name="human_review_required"
+                               {% if tenant.human_review_required %}checked{% endif %}>
+                        <label for="human_review_required">Require manual approval for order activation</label>
+                        <small>Orders will be created in draft state and require human approval before activation</small>
+                    </div>
+                </div>
+
+                <!-- Creative Review -->
+                <div class="form-section">
+                    <h3>Creative Review</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Configure how uploaded creatives are reviewed and approved
+                    </p>
+
+                    <div class="form-group">
+                        <label for="approval_mode">Creative Approval Mode</label>
+                        <select id="approval_mode" name="approval_mode" class="form-control" onchange="updateApprovalModeUI()">
+                            <option value="auto-approve" {% if tenant.approval_mode == 'auto-approve' %}selected{% endif %}>
+                                ✅ Auto-approve all creatives
+                            </option>
+                            <option value="require-human" {% if tenant.approval_mode == 'require-human' or not tenant.approval_mode %}selected{% endif %}>
+                                👤 Require human approval
+                            </option>
+                            <option value="ai-powered" {% if tenant.approval_mode == 'ai-powered' %}selected{% endif %}>
+                                🤖 AI-powered review
+                            </option>
+                        </select>
+                        <small>Choose how creatives are handled when uploaded</small>
+                    </div>
+
+                    <!-- Mode Descriptions -->
+                    <div id="mode-description" style="margin-top: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #2563eb;">
+                        <div id="desc-auto-approve" style="display: none;">
+                            <strong>✅ Auto-approve Mode:</strong>
+                            <p style="margin: 0.5rem 0 0 0;">All uploaded creatives are immediately approved and ready to use.</p>
+                        </div>
+                        <div id="desc-require-human" style="display: none;">
+                            <strong>👤 Human Review Mode:</strong>
+                            <p style="margin: 0.5rem 0 0 0;">All creatives remain pending until manually reviewed and approved by a human.</p>
+                        </div>
+                        <div id="desc-ai-powered" style="display: none;">
+                            <strong>🤖 AI-Powered Mode:</strong>
+                            <p style="margin: 0.5rem 0 0 0;">Creatives are automatically reviewed by AI based on your criteria below.</p>
+                        </div>
+                    </div>
+
+                    <!-- AI Configuration (shown only for ai-powered mode) -->
+                    <div id="ai-config-section" style="display: none; margin-top: 1rem;">
+                        {% if not has_gemini_key %}
+                        <div class="alert alert-warning" style="padding: 0.75rem; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px; margin-bottom: 1rem;">
+                            <strong>⚠️ Gemini API Key Required</strong>
+                            <p style="margin: 0.5rem 0 0;">AI review requires a Gemini API key. Please set your key in <a href="#" onclick="event.preventDefault(); switchSettingsSection('integrations')">Integrations → AI Services</a>.</p>
+                        </div>
+                        {% else %}
+                        <div class="alert alert-success" style="padding: 0.75rem; background: #d1fae5; border: 1px solid #34d399; border-radius: 6px; margin-bottom: 1rem;">
+                            <strong>✅ Gemini API Key Configured</strong>
+                            <p style="margin: 0.5rem 0 0; font-size: 0.875rem; color: #059669;">AI-powered creative review is enabled.</p>
+                        </div>
+                        {% endif %}
+
+                        <div class="form-group">
+                            <label for="creative_review_criteria">AI Review Criteria</label>
+                            <textarea id="creative_review_criteria" name="creative_review_criteria" class="form-control" rows="6"
+                                      placeholder="Enter your creative review criteria..."
+                                      style="font-family: monospace; font-size: 0.875rem;">{{ tenant.creative_review_criteria or '' }}</textarea>
+                            <small>Define when to <strong>approve</strong>, <strong>require human approval</strong>, or <strong>reject</strong> creatives. The AI will use these criteria to make three-state decisions.</small>
+                        </div>
+
+                        <details style="margin-top: 0.5rem;">
+                            <summary style="cursor: pointer; color: #2563eb; font-weight: 500; font-size: 0.875rem;">📝 Show Example Criteria</summary>
+                            <div style="margin-top: 0.75rem; padding: 0.75rem; background: #f8f9fa; border-radius: 6px; font-size: 0.875rem;">
+                                <strong>Example 1: Simple Three-State Review</strong>
+                                <pre style="background: white; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; overflow-x: auto; white-space: pre-wrap;">APPROVE if:
+✓ Creative clearly matches promoted offering
+✓ Professional quality (clear, readable)
+✓ Appropriate for general audiences
+
+REQUIRE HUMAN APPROVAL if:
+⚠️ Unsure about promoted offering match
+⚠️ Borderline quality or unclear messaging
+⚠️ Contains sensitive content that may need review
+⚠️ Novel or unusual creative approach
+
+REJECT if:
+✗ Wrong product/service advertised
+✗ Poor quality or unprofessional
+✗ Inappropriate or offensive content
+✗ Misleading claims</pre>
+
+                                <strong>Example 2: Brand Safety Focus</strong>
+                                <pre style="background: white; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; overflow-x: auto; white-space: pre-wrap;">APPROVE if all conditions met:
+- Clearly promotes the advertised product
+- No offensive, violent, or inappropriate content
+- No false or misleading claims
+- Professional image quality
+
+REQUIRE HUMAN APPROVAL if:
+- Contains claims that need fact-checking
+- Uses controversial themes or messaging
+- Quality is acceptable but not ideal
+- Uncertain about brand guideline compliance
+
+REJECT if any condition met:
+- Violates advertising standards
+- Contains competitor branding
+- Promotes wrong or unrelated products
+- Unprofessional or low quality</pre>
+
+                                <strong>Example 3: Detailed Guidelines</strong>
+                                <pre style="background: white; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; overflow-x: auto; white-space: pre-wrap;">Review each creative and respond with one of three actions:
+
+APPROVE - Creative is ready to go live:
+✓ Promoted offering matches creative content
+✓ Professional quality (clear images, readable text)
+✓ Appropriate for all audiences
+✓ No misleading claims or fine print issues
+✓ Brand/product clearly visible
+✓ Meets industry advertising standards
+
+REQUIRE HUMAN APPROVAL - Needs manual review:
+⚠️ Uncertain about promoted offering alignment
+⚠️ Questionable claims that may need verification
+⚠️ Sensitive topics or mature themes
+⚠️ Unusual format or creative approach
+⚠️ Borderline quality or professionalism
+⚠️ Potential legal or compliance concerns
+
+REJECT - Creative cannot be approved:
+✗ Wrong product/service advertised
+✗ Poor quality or unprofessional appearance
+✗ Inappropriate, offensive, or explicit content
+✗ Misleading, deceptive, or false claims
+✗ Violates advertising regulations
+✗ Contains competitor branding or logos</pre>
+                            </div>
+                        </details>
+
+                        <!-- AI Policy Configuration -->
+                        <div class="form-group" style="margin-top: 2rem;">
+                            <h4 style="margin-bottom: 1rem; color: #111827;">AI Confidence Thresholds</h4>
+                            <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                                Configure how confident the AI must be before automatically approving or rejecting creatives.
+                                Lower confidence decisions will require human review.
+                            </p>
+
+                            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                                <div class="form-group">
+                                    <label for="creative_auto_approve_threshold">
+                                        Auto-Approve Threshold
+                                        <span style="color: #10b981; font-weight: 600; margin-left: 0.5rem;" id="approve_threshold_value">90%</span>
+                                    </label>
+                                    <input type="range" id="creative_auto_approve_threshold" name="creative_auto_approve_threshold"
+                                           min="0.5" max="1.0" step="0.05"
+                                           value="{{ (tenant.creative_auto_approve_threshold if tenant.creative_auto_approve_threshold else 0.90) }}"
+                                           class="form-control" style="margin-bottom: 0.5rem;"
+                                           oninput="document.getElementById('approve_threshold_value').textContent = Math.round(this.value * 100) + '%'">
+                                    <small>AI must be at least this confident to auto-approve (default: 90%)</small>
+                                </div>
+
+                                <div class="form-group" style="margin-top: 1rem;">
+                                    <label for="creative_auto_reject_threshold">
+                                        Auto-Reject Threshold
+                                        <span style="color: #ef4444; font-weight: 600; margin-left: 0.5rem;" id="reject_threshold_value">90%</span>
+                                    </label>
+                                    <input type="range" id="creative_auto_reject_threshold" name="creative_auto_reject_threshold"
+                                           min="0.5" max="1.0" step="0.05"
+                                           value="{{ (tenant.creative_auto_reject_threshold if tenant.creative_auto_reject_threshold else 0.90) }}"
+                                           class="form-control" style="margin-bottom: 0.5rem;"
+                                           oninput="document.getElementById('reject_threshold_value').textContent = Math.round(this.value * 100) + '%'">
+                                    <small>AI must be at least this confident to auto-reject (default: 90%)</small>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="sensitive_categories">Always Require Human Review For</label>
+                                <input type="text" id="sensitive_categories" name="sensitive_categories"
+                                       value="{{ (tenant.ai_policy.always_require_human_for|join(', ') if tenant.ai_policy and tenant.ai_policy.always_require_human_for else 'political, healthcare, financial') }}"
+                                       class="form-control"
+                                       placeholder="political, healthcare, financial">
+                                <small>Categories that always require human review, regardless of AI confidence (comma-separated)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="learn_from_overrides" name="learn_from_overrides"
+                                           {% if not tenant.ai_policy or tenant.ai_policy.learn_from_overrides != False %}checked{% endif %}>
+                                    Track when humans disagree with AI decisions
+                                </label>
+                                <small style="display: block; margin-top: 0.25rem;">
+                                    Enable learning from human overrides to improve AI accuracy over time
+                                </small>
+                            </div>
+
+                            <div style="background: #eff6ff; padding: 1rem; border-radius: 8px; border-left: 4px solid #2563eb; margin-top: 1rem;">
+                                <strong>How It Works:</strong>
+                                <ul style="margin: 0.5rem 0 0 1.5rem; font-size: 0.875rem;">
+                                    <li><strong>High Confidence (≥90%):</strong> AI approvals/rejections are automatic</li>
+                                    <li><strong>Medium Confidence (10%-90%):</strong> Sent to human review queue with AI recommendation</li>
+                                    <li><strong>Sensitive Categories:</strong> Always require human review, regardless of confidence</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advertising Policy Section -->
+                <div class="form-section">
+                    <h3>Advertising Policy</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Configure which types of advertisers and content are permitted on your inventory
+                    </p>
+
+                    <div class="form-group">
+                        <label for="policy_check_enabled">
+                            <input type="checkbox" id="policy_check_enabled" name="policy_check_enabled"
+                                   {% if tenant.advertising_policy and tenant.advertising_policy.get('enabled') != False %}checked{% endif %}>
+                            Enable automated advertising policy checks
+                        </label>
+                        <small>AI-powered analysis of advertiser briefs during product discovery</small>
+                    </div>
+
+                    <div id="advertising-policy-config" style="{% if tenant.advertising_policy and tenant.advertising_policy.get('enabled') == False %}display: none;{% endif %}">
+                        {% if not tenant.gemini_api_key %}
+                        <div class="alert alert-warning" style="padding: 0.75rem; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px; margin-bottom: 1rem;">
+                            <strong>⚠️ Gemini API Key Required</strong>
+                            <p style="margin: 0.5rem 0 0;">Advertising policy checks require a Gemini API key to function. Without it, all campaigns will be allowed by default. Please set your key in <a href="#" onclick="event.preventDefault(); switchSettingsSection('integrations')">Integrations → AI Services</a>.</p>
+                        </div>
+                        {% endif %}
+
+                        <div class="form-group">
+                            <label for="default_prohibited_categories">Baseline Protected Categories</label>
+                            <textarea id="default_prohibited_categories" name="default_prohibited_categories" class="form-control" rows="5"
+                                      placeholder="Enter one category per line">{{ (tenant.advertising_policy.get('default_prohibited_categories', []) if tenant.advertising_policy else ['Targeting of vulnerable populations (children, elderly, disabled)', 'Discriminatory content based on protected characteristics', 'Illegal products/services', 'Misleading or deceptive claims', 'Harmful content that could exploit users'])|join('\n') }}</textarea>
+                            <small>Core policy categories that apply to all campaigns. These are always enforced when policy checks are enabled. Edit to match your standards.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="default_prohibited_tactics">Baseline Prohibited Tactics</label>
+                            <textarea id="default_prohibited_tactics" name="default_prohibited_tactics" class="form-control" rows="3"
+                                      placeholder="Enter one tactic per line">{{ (tenant.advertising_policy.get('default_prohibited_tactics', []) if tenant.advertising_policy else ['Clickbait or sensationalist content', 'False urgency or scarcity claims', 'Hidden or deceptive pricing'])|join('\n') }}</textarea>
+                            <small>Core advertising tactics that are never permitted. Edit to match your standards.</small>
+                        </div>
+
+                        <hr style="margin: 1.5rem 0; border: 0; border-top: 1px solid #e5e7eb;">
+
+                        <div class="form-group">
+                            <label for="prohibited_categories">Additional Prohibited Categories</label>
+                            <textarea id="prohibited_categories" name="prohibited_categories" class="form-control" rows="4"
+                                      placeholder="Enter one category per line (e.g., tobacco, gambling, adult content)">{{ (tenant.advertising_policy.get('prohibited_categories', []) if tenant.advertising_policy else [])|join('\n') }}</textarea>
+                            <small>Additional content categories to block beyond the baseline. Examples: tobacco, gambling, cannabis, alcohol, political ads, cryptocurrency.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="prohibited_tactics">Additional Prohibited Tactics</label>
+                            <textarea id="prohibited_tactics" name="prohibited_tactics" class="form-control" rows="3"
+                                      placeholder="Enter one tactic per line">{{ (tenant.advertising_policy.get('prohibited_tactics', []) if tenant.advertising_policy else [])|join('\n') }}</textarea>
+                            <small>Additional advertising tactics to prohibit beyond the baseline.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="prohibited_advertisers">Blocked Advertisers/Domains</label>
+                            <textarea id="prohibited_advertisers" name="prohibited_advertisers" class="form-control" rows="3"
+                                      placeholder="Enter one domain or advertiser name per line (e.g., competitor.com)">{{ (tenant.advertising_policy.get('prohibited_advertisers', []) if tenant.advertising_policy else [])|join('\n') }}</textarea>
+                            <small>Specific advertisers or domains to block. One per line.</small>
+                        </div>
+
+                        <div style="background: #eff6ff; padding: 1rem; border-radius: 8px; border-left: 4px solid #2563eb; margin-top: 1rem; font-size: 0.875rem;">
+                            <strong>How It Works:</strong>
+                            <ul style="margin: 0.5rem 0 0 1.5rem;">
+                                <li>AI analyzes each campaign brief against your baseline + additional rules</li>
+                                <li>Returns: <strong>Allowed</strong>, <strong>Restricted</strong>, or <strong>Blocked</strong></li>
+                                <li>Without Gemini API key: All campaigns allowed by default (policy checks disabled)</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Product Ranking Section -->
+                <div class="form-section">
+                    <h3>Product Ranking</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                        Optionally use AI to rank and filter products based on the buyer's brief
+                    </p>
+
+                    <div class="form-group">
+                        <label for="product_ranking_prompt">AI Ranking Prompt</label>
+                        <textarea id="product_ranking_prompt" name="product_ranking_prompt" class="form-control" rows="6"
+                                  placeholder="Leave empty to return all products without ranking..."
+                                  style="font-family: monospace; font-size: 0.875rem;">{{ tenant.product_ranking_prompt or '' }}</textarea>
+                        <small>When set, AI will use this prompt to rank products based on relevance to the buyer's brief. Leave empty to disable AI ranking and return all products.</small>
+                    </div>
+
+                    {% if not has_gemini_key %}
+                    <div class="alert alert-warning" style="padding: 0.75rem; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px; margin-top: 1rem;">
+                        <strong>⚠️ Gemini API Key Required</strong>
+                        <p style="margin: 0.5rem 0 0;">Product ranking requires a Gemini API key. Please set your key in <a href="#" onclick="event.preventDefault(); switchSettingsSection('integrations')">Integrations → AI Services</a>.</p>
+                    </div>
+                    {% endif %}
+
+                    <details style="margin-top: 0.75rem;">
+                        <summary style="cursor: pointer; color: #2563eb; font-weight: 500; font-size: 0.875rem;">📝 Show Example Prompts</summary>
+                        <div style="margin-top: 0.75rem; padding: 0.75rem; background: #f8f9fa; border-radius: 6px; font-size: 0.875rem;">
+                            <strong>Example 1: Simple Relevance Ranking</strong>
+                            <pre style="background: white; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; overflow-x: auto; white-space: pre-wrap;">Rank products by relevance to the campaign brief.
+Return the top 5 most relevant products.
+Consider: target audience alignment, format suitability, and campaign goals.</pre>
+
+                            <strong>Example 2: Budget-Aware Ranking</strong>
+                            <pre style="background: white; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; overflow-x: auto; white-space: pre-wrap;">Rank products by relevance to the brief, prioritizing:
+1. Target audience match
+2. Budget efficiency (lower CPM for similar reach)
+3. Format compatibility with campaign goals
+Return up to 10 products, sorted by overall fit.</pre>
+
+                            <strong>Example 3: Brand Safety Focus</strong>
+                            <pre style="background: white; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; overflow-x: auto; white-space: pre-wrap;">Rank products considering:
+- Brand safety alignment with the advertiser
+- Premium placement priority
+- Audience quality over quantity
+Exclude any products that don't match the brand's tone.</pre>
+                        </div>
+                    </details>
+
+                    <div style="background: #f0fdf4; padding: 1rem; border-radius: 8px; border-left: 4px solid #22c55e; margin-top: 1rem; font-size: 0.875rem;">
+                        <strong>How It Works:</strong>
+                        <ul style="margin: 0.5rem 0 0 1.5rem;">
+                            <li><strong>Prompt set:</strong> AI ranks products based on brief and returns top matches</li>
+                            <li><strong>No prompt:</strong> All products returned without filtering (default behavior)</li>
+                            <li>Ranking happens during <code>get_products</code> tool calls</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button type="button" onclick="saveBusinessRules()" class="btn btn-primary">
+                        Save Business Rules
+                    </button>
+                    <button type="reset" class="btn btn-secondary">Reset</button>
+                </div>
+            </form>
+        </div>
+        <!-- Inventory Settings -->
+        <div id="inventory" class="settings-section">
+            <div class="settings-header">
+                <h2>Inventory Management</h2>
+                <p>Sync and manage ad units, placements, and targeting options from your ad server</p>
+            </div>
+
+            {% if active_adapter == 'google_ad_manager' %}
+            <div class="form-section">
+                <h3>Inventory Sync Status</h3>
+
+                <div class="stats-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem;">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ inventory_count|default(0) }}</div>
+                        <div class="stat-label">Total Items</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ ad_units_count|default(0) }}</div>
+                        <div class="stat-label">Ad Units</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ placements_count|default(0) }}</div>
+                        <div class="stat-label">Placements</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ (custom_targeting_keys_count|default(0) + custom_targeting_values_count|default(0)) }}</div>
+                        <div class="stat-label">Targeting (Keys+Values)</div>
+                    </div>
+                </div>
+
+                <div class="status-card {% if running_sync %}info{% elif last_sync_time %}success{% else %}warning{% endif %}">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            {% if running_sync %}
+                                <strong>⏳ Sync in progress...</strong>
+                                <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem;">
+                                    Started {{ running_sync.started_at.strftime('%Y-%m-%d %I:%M %p UTC') }}. This may take several minutes for large inventories.
+                                </p>
+                                <p style="margin: 0.5rem 0 0 0; font-size: 0.75rem; color: #666;">
+                                    <em>The sync will continue even if you navigate away from this page.</em>
+                                </p>
+                                <button onclick="resetStuckSync()" class="btn" style="margin-top: 0.5rem; background: #dc2626; color: white; font-size: 0.875rem; padding: 0.375rem 0.75rem;">
+                                    🛑 Reset Stuck Sync
+                                </button>
+                            {% elif last_sync_time %}
+                                <strong>Last synced: {{ last_sync_time }}</strong>
+                                <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem;">
+                                    Syncing imports ad units, placements, and targeting options from Google Ad Manager.
+                                </p>
+                            {% else %}
+                                <strong>No sync performed yet</strong>
+                                <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem;">
+                                    Syncing imports ad units, placements, and targeting options from Google Ad Manager.
+                                </p>
+                            {% endif %}
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; flex-direction: column;">
+                            <div style="display: flex; gap: 0.5rem;">
+                                <button onclick="syncGAMInventory('incremental')" class="btn btn-primary" style="white-space: nowrap;" {% if not last_sync_time or running_sync %}disabled{% if not last_sync_time %} title="No previous sync - use Full Reset first"{% elif running_sync %} title="Sync already in progress"{% endif %}{% endif %}>
+                                    <span id="sync-icon-incremental">🔄</span> Incremental Sync
+                                </button>
+                                <button onclick="syncGAMInventory('full')" class="btn btn-warning" style="white-space: nowrap;" {% if running_sync %}disabled title="Sync already in progress"{% endif %}>
+                                    <span id="sync-icon-full">⚠️</span> Full Reset
+                                </button>
+                            </div>
+                            <p style="margin: 0; font-size: 0.75rem; color: #666;">
+                                <strong>Incremental:</strong> Only changed items (fast). <strong>Full Reset:</strong> Deletes & re-syncs all (slow).
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                {% if running_sync %}
+                <script>
+                    // Auto-resume polling for running sync
+                    document.addEventListener('DOMContentLoaded', function() {
+                        const syncId = "{{ running_sync.sync_id }}";
+                        const button = document.querySelector('button[onclick*="syncGAMInventory"]');
+                        if (button && syncId) {
+                            // Disable both buttons
+                            document.querySelectorAll('button[onclick*="syncGAMInventory"]').forEach(btn => btn.disabled = true);
+                            // Start polling
+                            pollSyncStatus(syncId, button, button.innerHTML, null);
+                        }
+                    });
+                </script>
+                {% endif %}
+
+                <div class="form-section" style="margin-top: 1.5rem;">
+                    <h3>Actions</h3>
+                    <div style="display: flex; gap: 1rem;">
+                        <a href="{{ url_for('inventory.inventory_browser', tenant_id=tenant_id, type='all') }}" class="btn btn-secondary">
+                            📊 Browse Inventory
+                        </a>
+                        <a href="{{ url_for('inventory.targeting_browser', tenant_id=tenant_id) }}" class="btn btn-secondary">
+                            🎯 Browse Targeting
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-warning">
+                <strong>Ad Server Required</strong>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem;">
+                    Connect to Google Ad Manager in the Ad Server settings to enable inventory sync.
+                </p>
+                <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                    <a href="#" onclick="event.preventDefault(); switchSettingsSection('adserver')" class="btn btn-primary">
+                        Configure Ad Server
+                    </a>
+                    <a href="#" onclick="event.preventDefault(); switchSettingsSection('publishers')" class="btn btn-secondary">
+                        Manage Publishers
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Publishers Settings -->
+        <div id="publishers" class="settings-section">
+            <div class="settings-header">
+                <h2>Publisher Partnerships</h2>
+                <p>Manage the publishers you represent and sell inventory for</p>
+            </div>
+
+            <div class="form-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3>Publisher Partners</h3>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button onclick="syncAllPublishers()" class="btn btn-secondary" id="sync-publishers-btn">
+                            <span id="sync-publishers-icon">🔄</span> Verify All
+                        </button>
+                        <button onclick="showAddPublisherModal()" class="btn btn-primary">
+                            + Add Publisher
+                        </button>
+                    </div>
+                </div>
+
+                <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1rem;">
+                    Publishers must authorize your sales agent in their <code>/.well-known/adagents.json</code> file.
+                    Once authorized, you can sell their inventory to advertisers.
+                </p>
+
+                <!-- Publishers List -->
+                <div id="publishers-list" style="margin-top: 1rem;">
+                    <div style="text-align: center; padding: 2rem; color: #6b7280;">
+                        <span style="font-size: 1.5rem;">⏳</span>
+                        <p>Loading publishers...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Add Publisher Modal -->
+            <div id="add-publisher-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+                <div style="background: white; border-radius: 12px; padding: 2rem; max-width: 500px; width: 90%; max-height: 90vh; overflow-y: auto;">
+                    <h3 style="margin: 0 0 1rem 0;">Add Publisher Partner</h3>
+                    <p style="color: #6b7280; font-size: 0.875rem; margin-bottom: 1.5rem;">
+                        Enter the domain of the publisher you want to represent. They must have authorized your sales agent in their adagents.json file.
+                    </p>
+
+                    <form id="add-publisher-form" onsubmit="addPublisher(event)">
+                        <div class="form-group">
+                            <label for="publisher-domain">Publisher Domain</label>
+                            <input type="text" id="publisher-domain" name="publisher_domain"
+                                   placeholder="example.com" required
+                                   style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                            <small style="color: #6b7280;">Enter the domain without http:// or https://</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="publisher-display-name">Display Name (Optional)</label>
+                            <input type="text" id="publisher-display-name" name="display_name"
+                                   placeholder="Example Publisher"
+                                   style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                            <small style="color: #6b7280;">Friendly name for this publisher</small>
+                        </div>
+
+                        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+                            <button type="button" onclick="hideAddPublisherModal()" class="btn btn-secondary">Cancel</button>
+                            <button type="submit" class="btn btn-primary" id="add-publisher-submit">Add Publisher</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Products Settings -->
+        <div id="products" class="settings-section">
+            <div class="settings-header">
+                <h2>Product Management</h2>
+                <p>Define advertising products available for purchase</p>
+            </div>
+
+            {% if product_count == 0 %}
+            <!-- Show wizard prominently for new tenants -->
+            <div class="alert alert-info" style="margin-bottom: 1.5rem;">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <i class="fas fa-info-circle" style="font-size: 1.5rem;"></i>
+                    <div style="flex: 1;">
+                        <strong>No Products Configured Yet</strong>
+                        <p style="margin: 0.25rem 0 0 0; font-size: 0.875rem;">
+                            Create your first advertising product to start offering inventory to buyers.
+                        </p>
+                    </div>
+                    <a href="/tenant/{{ tenant.tenant_id }}/products/add" class="btn btn-success">
+                        <i class="fas fa-plus"></i> Create Product
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="status-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>{{ product_count }} Products Configured</strong>
+                        <p style="margin: 0.25rem 0 0 0; font-size: 0.75rem;">
+                            {{ active_products }} active, {{ draft_products }} draft
+                        </p>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <a href="/tenant/{{ tenant.tenant_id }}/products" class="btn btn-small">Manage</a>
+                        <a href="/tenant/{{ tenant.tenant_id }}/products/add" class="btn btn-primary btn-small">Add New</a>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Creative Formats section removed - table dropped in migration f2addf453200 -->
+        <!-- Formats are now fetched from creative agents via AdCP, not stored in local DB -->
+
+        <!-- Advertisers Settings -->
+        <div id="advertisers" class="settings-section">
+            <div class="settings-header">
+                <h2>Advertiser Management</h2>
+                <p>Manage advertisers who can access your inventory</p>
+            </div>
+
+            <div class="status-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>{{ advertiser_count }} Advertisers Registered</strong>
+                        <p style="margin: 0.25rem 0 0 0; font-size: 0.75rem;">
+                            {{ active_advertisers }} active this month
+                        </p>
+                    </div>
+                    <a href="/tenant/{{ tenant.tenant_id }}/principals/create" class="btn btn-primary btn-small">
+                        Add Advertiser
+                    </a>
+                </div>
+            </div>
+
+            <!-- Advertisers List -->
+            {% if principals %}
+            <div class="card" style="margin-top: 1rem;">
+                <div class="card-body">
+                    <h5 class="card-title">Current Advertisers</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Principal ID</th>
+                                    <th>Access Token</th>
+                                    <th>Platform Mappings</th>
+                                    <th>Copy Config</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for principal in principals %}
+                                <tr>
+                                    <td><strong>{{ principal.name }}</strong></td>
+                                    <td><code>{{ principal.principal_id }}</code></td>
+                                    <td>
+                                        <div class="d-flex align-items-center gap-1">
+                                            <code class="token-display" data-full="{{ principal.access_token }}" data-truncated="{{ principal.access_token[:12] }}...">{{ principal.access_token[:12] }}...</code>
+                                            <button class="btn btn-outline-secondary btn-sm py-0 px-1"
+                                                    onclick="toggleTokenVisibility(this)"
+                                                    title="Show/hide full token">
+                                                👁
+                                            </button>
+                                            <button class="btn btn-outline-secondary btn-sm py-0 px-1"
+                                                    onclick="copyAccessToken('{{ principal.access_token }}')"
+                                                    title="Copy token">
+                                                📋
+                                            </button>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% if principal.platform_mappings %}
+                                            {% set mappings = principal.platform_mappings | from_json %}
+                                            {% for platform, config in mappings.items() %}
+                                                {% if platform == 'gam_advertiser_id' %}
+                                                    <small class="badge bg-primary me-1" title="Google Ad Manager Advertiser ID">GAM: {{ config }}</small>
+                                                {% elif platform == 'google_ad_manager' %}
+                                                    {% if config is mapping and (config.advertiser_id or config.company_id) %}
+                                                        <small class="badge bg-primary me-1" title="Google Ad Manager Advertiser">GAM: {{ config.advertiser_id or config.company_id }}</small>
+                                                    {% else %}
+                                                        <small class="badge bg-primary me-1" title="Google Ad Manager (not configured)">GAM: Not configured</small>
+                                                    {% endif %}
+                                                {% elif platform == 'mock' %}
+                                                    {% if config is mapping and config.advertiser_id %}
+                                                        <small class="badge bg-secondary me-1" title="Mock Adapter">Mock: {{ config.advertiser_id }}</small>
+                                                    {% else %}
+                                                        <small class="badge bg-secondary me-1" title="Mock Adapter">Mock</small>
+                                                    {% endif %}
+                                                {% else %}
+                                                    <small class="badge bg-info me-1" title="{{ platform }}">{{ platform }}: {{ config if config is string else config|first if config is iterable else config }}</small>
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% else %}
+                                        <small class="text-muted">None</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-primary btn-sm"
+                                                    onclick="copyA2AConfig('{{ principal.principal_id }}', '{{ principal.name }}', '{{ principal.access_token }}')"
+                                                    title="Copy A2A Configuration">
+                                                A2A
+                                            </button>
+                                            <button class="btn btn-outline-primary btn-sm"
+                                                    onclick="copyMCPConfig('{{ principal.principal_id }}', '{{ principal.name }}', '{{ principal.access_token }}')"
+                                                    title="Copy MCP Configuration">
+                                                MCP
+                                            </button>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <a href="{{ url_for('principals.edit_principal', tenant_id=tenant_id, principal_id=principal.principal_id) }}"
+                                               class="btn btn-outline-secondary btn-sm"
+                                               title="Edit Advertiser">
+                                                ✏️
+                                            </a>
+                                            <button class="btn btn-outline-danger btn-sm"
+                                                    onclick="deletePrincipal('{{ principal.principal_id }}', '{{ principal.name }}')"
+                                                    title="Delete Advertiser">
+                                                🗑️
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="card" style="margin-top: 1rem;">
+                <div class="card-body text-center text-muted">
+                    <p>No advertisers registered yet.</p>
+                    <a href="/tenant/{{ tenant.tenant_id }}/principals/create" class="btn btn-primary">
+                        Create First Advertiser
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Integrations Settings -->
+        <div id="integrations" class="settings-section">
+            <div class="settings-header">
+                <h2>Integrations</h2>
+                <p>Connect external services and configure webhooks</p>
+            </div>
+
+            <div class="form-section">
+                <h3>Slack Integration</h3>
+                <p class="form-section-description">
+                    Receive real-time notifications for creative approvals, tasks, and audit logs in your Slack workspace.
+                </p>
+
+                <details style="margin-bottom: 1rem; padding: 1rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+                    <summary style="cursor: pointer; font-weight: 500; color: #374151;">
+                        📖 How to set up a Slack webhook
+                    </summary>
+                    <div style="margin-top: 1rem; padding-left: 0.5rem;">
+                        <ol style="margin: 0.5rem 0; padding-left: 1.5rem; line-height: 1.8;">
+                            <li>Go to <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> and create a new app (or select an existing one)</li>
+                            <li>Click on <strong>Incoming Webhooks</strong> in the left sidebar</li>
+                            <li>Toggle <strong>Activate Incoming Webhooks</strong> to On</li>
+                            <li>Click <strong>Add New Webhook to Workspace</strong></li>
+                            <li>Select the channel where you want notifications</li>
+                            <li>Copy the webhook URL (starts with <code>https://hooks.slack.com/services/...</code>)</li>
+                            <li>Paste it into the fields below</li>
+                        </ol>
+                        <img src="/static/images/slack-webhook-setup.png" alt="Slack Incoming Webhooks setup page" style="max-width: 100%; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 1rem;">
+                        <p style="margin-top: 1rem; font-size: 0.875rem; color: #6b7280;">
+                            💡 <strong>Tip:</strong> You can use the same webhook for both notifications and audit logs, or create separate webhooks for different channels.
+                        </p>
+                    </div>
+                </details>
+
+                <form method="POST" action="/tenant/{{ tenant.tenant_id }}/settings/slack">
+                    <div class="form-group">
+                        <label for="slack_webhook_url">Task Notifications Webhook URL</label>
+                        <input type="url" id="slack_webhook_url" name="slack_webhook_url"
+                               value="{{ tenant.slack_webhook_url or '' }}"
+                               placeholder="https://hooks.slack.com/services/YOUR/WEBHOOK/URL">
+                        <small>Receives notifications for new tasks and creative approvals</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="slack_audit_webhook_url">Audit Log Webhook URL (Optional)</label>
+                        <input type="url" id="slack_audit_webhook_url" name="slack_audit_webhook_url"
+                               value="{{ tenant.slack_audit_webhook_url or '' }}"
+                               placeholder="https://hooks.slack.com/services/YOUR/AUDIT/WEBHOOK">
+                        <small>Separate channel for audit logs and security alerts</small>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-primary">Save Slack Settings</button>
+                        <button type="button" onclick="testSlack()" class="btn btn-secondary">Test Connection</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="form-section">
+                <h3>AI Services</h3>
+                <p class="form-section-description">
+                    Configure AI-powered features like creative review, policy checks, and auto-naming.
+                    Choose your preferred AI provider and model.
+                </p>
+
+                {% set ai_config = tenant.ai_config or {} %}
+                {% set has_ai = ai_config.get('api_key') or tenant.gemini_api_key %}
+                {% set current_provider = ai_config.get('provider', 'gemini') %}
+                {% set current_model = ai_config.get('model', '') %}
+
+                {% if not has_ai %}
+                <div class="alert alert-warning" style="padding: 0.75rem; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px; margin-bottom: 1rem;">
+                    <strong>API Key Required</strong>
+                    <p style="margin: 0.5rem 0 0;">AI-powered features are not available without an API key. Configure your preferred provider below.</p>
+                </div>
+                {% else %}
+                <div class="alert alert-success" style="padding: 0.75rem; background: #d1fae5; border: 1px solid #34d399; border-radius: 6px; margin-bottom: 1rem;">
+                    <strong>AI Services Configured</strong>
+                    <p id="ai-status-text" style="margin: 0.5rem 0 0;">
+                        Provider: <strong id="ai-status-provider">{{ current_provider | title }}</strong>
+                        {% if current_model %} | Model: <strong>{{ current_model }}</strong>{% endif %}
+                    </p>
+                </div>
+                {% endif %}
+
+                {% if tenant.gemini_api_key and not ai_config.get('api_key') %}
+                <div class="alert alert-info" style="padding: 0.75rem; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 6px; margin-bottom: 1rem;">
+                    <strong>Legacy Gemini Key Detected</strong>
+                    <p style="margin: 0.5rem 0 0;">Your existing Gemini API key will continue to work. Save the form below to migrate to the new multi-provider system.</p>
+                </div>
+                {% endif %}
+
+                <form method="POST" action="/tenant/{{ tenant.tenant_id }}/settings/ai">
+                    <div class="form-group">
+                        <label for="ai_provider">AI Provider</label>
+                        <select id="ai_provider" name="ai_provider" onchange="updateModelOptions()">
+                            <option value="">Loading providers...</option>
+                        </select>
+                        <small>Select your preferred AI provider. <span id="provider-count"></span></small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="ai_model">Model</label>
+                        <select id="ai_model" name="ai_model">
+                            <option value="">Select a provider first</option>
+                        </select>
+                        <small>Select the specific model to use. <span id="model-count"></span></small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="ai_api_key">API Key</label>
+                        <input type="password" id="ai_api_key" name="ai_api_key"
+                               placeholder="Enter your API key (leave blank to keep existing)"
+                               autocomplete="new-password">
+                        <small>
+                            Leave blank to keep existing key.
+                            <a id="api-key-link" href="#" target="_blank" style="display: none;">Get API key</a>
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="logfire_token">Logfire Token (Optional)</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
+                            <input type="password" id="logfire_token" name="logfire_token"
+                                   placeholder="Enter Logfire token for AI observability"
+                                   autocomplete="new-password"
+                                   style="flex: 1;"
+                                   {% if has_logfire %}value="••••••••"{% endif %}>
+                            <button type="button" onclick="testLogfireConnection()" class="btn btn-secondary btn-sm" style="white-space: nowrap;">Test Logfire</button>
+                        </div>
+                        <small>
+                            Optional. Enable <a href="https://logfire.pydantic.dev/" target="_blank">Logfire</a> for AI request tracing and observability.
+                            {% if has_logfire %}<span style="color: #10b981;">Configured</span>{% endif %}
+                        </small>
+                        <div id="logfire-test-result" style="display: none; margin-top: 0.5rem; padding: 0.5rem; border-radius: 4px; font-size: 0.875rem;"></div>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-primary">Save AI Settings</button>
+                        <button type="button" onclick="testAIConnection()" class="btn btn-secondary">Test AI Connection</button>
+                    </div>
+                </form>
+
+                <div id="ai-test-result" style="display: none; margin-top: 1rem; padding: 0.75rem; border-radius: 6px;"></div>
+
+                <script>
+                const scriptRoot = '{{ request.script_root }}' || '';
+                const currentProvider = '{{ current_provider }}';
+                const currentModel = '{{ current_model }}';
+                let aiModelsData = null;
+
+                // Preferred order for providers (most common first)
+                const providerOrder = [
+                    'google-gla', 'anthropic', 'openai', 'groq', 'mistral', 'deepseek', 'grok',
+                    'cohere', 'bedrock', 'google-vertex', 'huggingface', 'cerebras', 'moonshotai', 'heroku',
+                    // Gateway providers at the end
+                    'gateway/anthropic', 'gateway/openai', 'gateway/bedrock', 'gateway/google-vertex', 'gateway/groq'
+                ];
+
+                async function loadAIModels() {
+                    try {
+                        const response = await fetch(scriptRoot + '/tenant/{{ tenant.tenant_id }}/settings/ai/models', {
+                            credentials: 'same-origin'
+                        });
+                        aiModelsData = await response.json();
+
+                        // Populate provider dropdown
+                        const providerSelect = document.getElementById('ai_provider');
+                        providerSelect.innerHTML = '';
+
+                        // Sort providers by preferred order
+                        const sortedProviders = Object.keys(aiModelsData).sort((a, b) => {
+                            const aIdx = providerOrder.indexOf(a);
+                            const bIdx = providerOrder.indexOf(b);
+                            if (aIdx === -1 && bIdx === -1) return a.localeCompare(b);
+                            if (aIdx === -1) return 1;
+                            if (bIdx === -1) return -1;
+                            return aIdx - bIdx;
+                        });
+
+                        // Add optgroups for regular and gateway providers
+                        let regularGroup = document.createElement('optgroup');
+                        regularGroup.label = 'Direct Providers';
+                        let gatewayGroup = document.createElement('optgroup');
+                        gatewayGroup.label = 'Pydantic AI Gateway';
+
+                        sortedProviders.forEach(provider => {
+                            const info = aiModelsData[provider];
+                            const option = document.createElement('option');
+                            option.value = provider;
+                            option.textContent = info.name + ' (' + info.models.length + ' models)';
+                            if (provider === currentProvider || (currentProvider === 'gemini' && provider === 'google-gla')) {
+                                option.selected = true;
+                            }
+                            if (info.gateway) {
+                                gatewayGroup.appendChild(option);
+                            } else {
+                                regularGroup.appendChild(option);
+                            }
+                        });
+
+                        providerSelect.appendChild(regularGroup);
+                        if (gatewayGroup.children.length > 0) {
+                            providerSelect.appendChild(gatewayGroup);
+                        }
+
+                        document.getElementById('provider-count').textContent = sortedProviders.length + ' providers available';
+
+                        // Initialize model options
+                        updateModelOptions();
+
+                        // Update status bar with friendly provider name
+                        updateStatusBar();
+                    } catch (error) {
+                        console.error('Failed to load AI models:', error);
+                        document.getElementById('ai_provider').innerHTML = '<option value="">Failed to load providers</option>';
+                    }
+                }
+
+                function updateModelOptions() {
+                    if (!aiModelsData) return;
+
+                    const provider = document.getElementById('ai_provider').value;
+                    const modelSelect = document.getElementById('ai_model');
+                    const apiKeyLink = document.getElementById('api-key-link');
+
+                    if (!provider || !aiModelsData[provider]) {
+                        modelSelect.innerHTML = '<option value="">Select a provider first</option>';
+                        return;
+                    }
+
+                    const providerInfo = aiModelsData[provider];
+                    modelSelect.innerHTML = '';
+
+                    providerInfo.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model;
+                        option.textContent = model;
+                        if (model === currentModel) {
+                            option.selected = true;
+                        }
+                        modelSelect.appendChild(option);
+                    });
+
+                    document.getElementById('model-count').textContent = providerInfo.models.length + ' models available';
+
+                    // Update API key link
+                    if (providerInfo.key_url) {
+                        apiKeyLink.href = providerInfo.key_url;
+                        apiKeyLink.style.display = 'inline';
+                        apiKeyLink.textContent = 'Get ' + providerInfo.name + ' key';
+                    } else {
+                        apiKeyLink.style.display = 'none';
+                    }
+                }
+
+                function updateStatusBar() {
+                    // Update status bar provider name to friendly name
+                    const statusProvider = document.getElementById('ai-status-provider');
+                    if (!statusProvider || !aiModelsData) return;
+
+                    // Map the current provider to its friendly name
+                    let providerKey = currentProvider;
+                    // Handle legacy "gemini" provider name
+                    if (providerKey === 'gemini') {
+                        providerKey = 'google-gla';
+                    }
+
+                    if (aiModelsData[providerKey]) {
+                        statusProvider.textContent = aiModelsData[providerKey].name;
+                    }
+                }
+
+                async function testAIConnection() {
+                    const resultDiv = document.getElementById('ai-test-result');
+                    const provider = document.getElementById('ai_provider').value;
+                    const model = document.getElementById('ai_model').value;
+                    const apiKey = document.getElementById('ai_api_key').value;
+
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = '#f3f4f6';
+                    resultDiv.style.border = '1px solid #d1d5db';
+                    resultDiv.innerHTML = '<strong>Testing connection...</strong> This may take a few seconds.';
+
+                    try {
+                        const response = await fetch(scriptRoot + '/tenant/{{ tenant.tenant_id }}/settings/ai/test', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ provider, model, api_key: apiKey })
+                        });
+
+                        // Handle authentication errors
+                        if (response.status === 401) {
+                            resultDiv.style.background = '#fef3c7';
+                            resultDiv.style.border = '1px solid #fbbf24';
+                            resultDiv.innerHTML = '<strong>Session expired.</strong> Please <a href="' + scriptRoot + '/login">log in again</a>.';
+                            return;
+                        }
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            resultDiv.style.background = '#d1fae5';
+                            resultDiv.style.border = '1px solid #34d399';
+                            resultDiv.innerHTML = '<strong>Success!</strong> ' + data.message;
+                        } else {
+                            resultDiv.style.background = '#fee2e2';
+                            resultDiv.style.border = '1px solid #f87171';
+                            resultDiv.innerHTML = '<strong>Failed:</strong> ' + data.error;
+                        }
+                    } catch (error) {
+                        resultDiv.style.background = '#fee2e2';
+                        resultDiv.style.border = '1px solid #f87171';
+                        resultDiv.innerHTML = '<strong>Error:</strong> ' + error.message;
+                    }
+                }
+
+                async function testLogfireConnection() {
+                    const resultDiv = document.getElementById('logfire-test-result');
+                    const logfireToken = document.getElementById('logfire_token').value;
+
+                    if (!logfireToken || logfireToken === '••••••••') {
+                        resultDiv.style.display = 'block';
+                        resultDiv.style.background = '#fef3c7';
+                        resultDiv.style.border = '1px solid #fbbf24';
+                        resultDiv.innerHTML = 'Enter a Logfire token to test, or save first to test the existing token.';
+                        return;
+                    }
+
+                    resultDiv.style.display = 'block';
+                    resultDiv.style.background = '#f3f4f6';
+                    resultDiv.style.border = '1px solid #d1d5db';
+                    resultDiv.innerHTML = 'Testing Logfire connection...';
+
+                    try {
+                        const response = await fetch(scriptRoot + '/tenant/{{ tenant.tenant_id }}/settings/ai/test-logfire', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'same-origin',
+                            body: JSON.stringify({ logfire_token: logfireToken })
+                        });
+
+                        if (response.status === 401) {
+                            resultDiv.style.background = '#fef3c7';
+                            resultDiv.style.border = '1px solid #fbbf24';
+                            resultDiv.innerHTML = '<strong>Session expired.</strong> Please <a href="' + scriptRoot + '/login">log in again</a>.';
+                            return;
+                        }
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            resultDiv.style.background = '#d1fae5';
+                            resultDiv.style.border = '1px solid #34d399';
+                            resultDiv.innerHTML = '<strong>Success!</strong> ' + data.message;
+                        } else {
+                            resultDiv.style.background = '#fee2e2';
+                            resultDiv.style.border = '1px solid #f87171';
+                            resultDiv.innerHTML = '<strong>Failed:</strong> ' + data.error;
+                        }
+                    } catch (error) {
+                        resultDiv.style.background = '#fee2e2';
+                        resultDiv.style.border = '1px solid #f87171';
+                        resultDiv.innerHTML = '<strong>Error:</strong> ' + error.message;
+                    }
+                }
+
+                // Initialize on page load
+                document.addEventListener('DOMContentLoaded', loadAIModels);
+                </script>
+            </div>
+
+            <div class="form-section">
+                <h3>Creative Agents</h3>
+                <p class="form-section-description">
+                    Manage creative agents that provide ad format definitions and rendering capabilities. The default AdCP creative agent is always available.
+                </p>
+
+                <div style="margin-bottom: 1rem;">
+                    <a href="{{ url_for('creative_agents.list_creative_agents', tenant_id=tenant.tenant_id) }}"
+                       class="btn btn-primary">
+                        Manage Creative Agents
+                    </a>
+                </div>
+
+                <div style="padding: 1rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+                    <p style="margin: 0; color: #6b7280; font-size: 0.875rem;">
+                        💡 <strong>What are Creative Agents?</strong><br>
+                        Creative agents are external services that define ad formats (like "Display 300x250" or "Video Pre-Roll 30s")
+                        and handle creative rendering. You can add custom creative agents to support proprietary formats or
+                        integrate with specialized creative services.
+                    </p>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Signals Discovery Agents</h3>
+                <p class="form-section-description">
+                    Manage signals discovery agents that enhance product recommendations with intelligent targeting based on contextual signals and audience insights.
+                </p>
+
+                <div style="margin-bottom: 1rem;">
+                    <a href="{{ url_for('signals_agents.list_signals_agents', tenant_id=tenant.tenant_id) }}"
+                       class="btn btn-primary">
+                        Manage Signals Agents
+                    </a>
+                </div>
+
+                <div style="padding: 1rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+                    <p style="margin: 0; color: #6b7280; font-size: 0.875rem;">
+                        💡 <strong>What are Signals Discovery Agents?</strong><br>
+                        Signals agents are external services that provide contextual targeting signals and audience intelligence
+                        to enhance product recommendations. They can integrate with first-party data platforms, sustainability
+                        metrics (AXE signals), or custom audience intelligence services.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Settings -->
+        <div id="api" class="settings-section">
+            <div class="settings-header">
+                <h2>API & Tokens</h2>
+                <p>Manage API access and authentication tokens</p>
+            </div>
+
+            <div class="form-section">
+                <h3>MCP Server Endpoint</h3>
+                <div class="config-code">
+                    <button class="copy-button" onclick="copyToClipboard(this)">Copy</button>
+                    <pre style="margin: 0;">{% if tenant.virtual_host %}https://{{ tenant.virtual_host }}/mcp/{% elif is_production %}https://{{ tenant.subdomain }}.{{ sales_agent_domain }}/mcp/{% else %}http://localhost:{{ mcp_port }}/mcp/{% endif %}</pre>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Python Client Example</h3>
+                <div class="config-code">
+                    <button class="copy-button" onclick="copyToClipboard(this)">Copy</button>
+                    <pre style="margin: 0;">from fastmcp.client import Client
+from fastmcp.client.transports import StreamableHttpTransport
+
+headers = {
+    "x-adcp-auth": "YOUR_ACCESS_TOKEN"{% if not tenant.virtual_host %},
+    "x-adcp-tenant": "{{ tenant.subdomain }}"{% endif %}
+
+}
+transport = StreamableHttpTransport(
+    url="{% if tenant.virtual_host %}https://{{ tenant.virtual_host }}/mcp/{% elif is_production %}https://{{ tenant.subdomain }}.{{ sales_agent_domain }}/mcp/{% else %}http://localhost:{{ mcp_port }}/mcp/{% endif %}",
+    headers=headers
+)
+client = Client(transport=transport)
+
+# Discover products
+result = await client.tools.get_products(brief="video ads")</pre>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Active Tokens</h3>
+                <p style="margin-bottom: 1rem; color: #6b7280; font-size: 0.875rem;">
+                    Each advertiser has their own API token
+                </p>
+                <!-- Token list would go here -->
+            </div>
+        </div>
+
+        <!-- Advanced Settings -->
+        <div id="advanced" class="settings-section">
+            <div class="settings-header">
+                <h2>Advanced Settings</h2>
+                <p>Expert configuration and raw JSON editing</p>
+            </div>
+
+            <div class="status-card warning">
+                <strong>⚠️ Warning</strong>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.75rem;">
+                    Modifying these settings incorrectly may break your configuration
+                </p>
+            </div>
+
+            <div class="form-section">
+                <h3>Raw Configuration (JSON)</h3>
+                <form method="POST" action="/tenant/{{ tenant.tenant_id }}/settings/raw">
+                    <div class="form-group">
+                        <textarea id="raw_config" name="config" rows="20"
+                                  style="font-family: monospace;">{{ tenant.config_json }}</textarea>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" class="btn btn-primary">Save Configuration</button>
+                        <button type="button" onclick="formatJSON()" class="btn btn-secondary">Format JSON</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Danger Zone -->
+        <div id="danger-zone" class="settings-section">
+            <div class="settings-header">
+                <h2>⚠️ Danger Zone</h2>
+                <p>Irreversible and destructive actions</p>
+            </div>
+
+            <div class="status-card danger">
+                <strong>⚠️ Warning</strong>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.75rem;">
+                    Actions in this section are permanent and cannot be easily undone
+                </p>
+            </div>
+
+            <div class="form-section" style="border: 2px solid #dc2626; border-radius: 8px; padding: 1.5rem; background: #fef2f2;">
+                <h3 style="color: #991b1b;">Deactivate Sales Agent</h3>
+                <p style="color: #7f1d1d; margin-bottom: 1rem;">
+                    Deactivating your sales agent will:
+                </p>
+                <ul style="color: #7f1d1d; margin-bottom: 1.5rem;">
+                    <li>Stop all active media buys immediately</li>
+                    <li>Disable API access for all principals</li>
+                    <li>Hide this tenant from all user dashboards</li>
+                    <li>Prevent new signups or logins</li>
+                    <li><strong>Preserve all data</strong> - you can reactivate later by contacting support</li>
+                </ul>
+
+                <form id="deactivate-form" method="POST" action="/tenant/{{ tenant.tenant_id }}/deactivate" onsubmit="return confirmDeactivation()">
+                    <div class="form-group">
+                        <label for="confirm-name" style="color: #991b1b;">
+                            Type <strong>{{ tenant.name }}</strong> to confirm:
+                        </label>
+                        <input type="text" id="confirm-name" name="confirm_name" required
+                               placeholder="Enter tenant name to confirm"
+                               style="border: 2px solid #dc2626;">
+                    </div>
+
+                    <button type="submit" class="btn" style="background: #dc2626; color: white;">
+                        Deactivate Sales Agent
+                    </button>
+                </form>
+            </div>
+
+            {% if not tenant.is_active %}
+            <div class="form-section" style="border: 2px solid #059669; border-radius: 8px; padding: 1.5rem; background: #f0fdf4;">
+                <h3 style="color: #065f46;">Sales Agent Currently Inactive</h3>
+                <p style="color: #047857; margin-bottom: 1rem;">
+                    This sales agent is currently deactivated. To reactivate, please contact support at
+                    <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Configuration for external JavaScript -->
+<div id="settings-config"
+     data-script-name="{{ script_name }}"
+     data-tenant-id="{{ tenant.tenant_id }}"
+     data-tenant-name="{{ tenant.name }}"
+     data-active-adapter="{{ active_adapter }}"
+     data-a2a-port="{{ a2a_port }}"
+     data-mcp-port="{{ mcp_port }}"
+     data-is-production="{% if is_production %}true{% else %}false{% endif %}"
+     data-virtual-host="{{ tenant.virtual_host if tenant.virtual_host else '' }}"
+     data-subdomain="{{ tenant.subdomain if tenant.subdomain else '' }}"
+     data-tenant-ad-server="{{ tenant.ad_server if tenant.ad_server else '' }}"
+     data-sales-agent-domain="{{ sales_agent_domain if sales_agent_domain else 'sales-agent.example.com' }}"
+     style="display: none;">
+</div>
+
+<script src="{{ url_for('static', filename='js/tenant_settings.js') }}"></script>
+
+{% if not single_tenant_mode %}
+<!-- Approximated DNS Widget (multi-tenant only) -->
+<link rel="stylesheet" href="https://cloud.approximated.app/dnswidget/dnswidget.v1.css">
+<script src="https://cloud.approximated.app/dnswidget/dnswidget.v1.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const virtualHostInput = document.getElementById('virtual_host');
+    const dnsWidgetContainer = document.getElementById('dns-widget-container');
+    const tenantId = '{{ tenant.tenant_id }}';
+
+    let widgetInitialized = false;
+    let debounceTimer = null;
+    let dnsVerified = false;
+
+    // Function to initialize the DNS widget
+    async function initializeDNSWidget() {
+        const virtualHost = virtualHostInput.value.trim();
+        console.log('initializeDNSWidget called with domain:', virtualHost);
+
+        // Show/hide widget based on virtual host input
+        if (virtualHost) {
+            dnsWidgetContainer.style.display = 'block';
+
+            // Only initialize once
+            if (!widgetInitialized) {
+                try {
+                    // Get script name for proper URL routing
+                    const scriptName = document.getElementById('settings-config').dataset.scriptName || '';
+
+                    // Get token from our backend
+                    const response = await fetch(`${scriptName}/tenant/${tenantId}/settings/approximated-token`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        console.error('Failed to get Approximated token:', await response.text());
+                        dnsWidgetContainer.innerHTML = '<p style="color: #dc2626; font-size: 0.875rem;">❌ DNS widget unavailable. Please contact support.</p>';
+                        return;
+                    }
+
+                    const data = await response.json();
+                    console.log('Approximated token API response:', data);
+
+                    if (data.success && data.token) {
+                        console.log('Initializing DNS widget with token:', data.token.substring(0, 20) + '...');
+                        console.log('Approximated proxy IP:', data.proxy_ip);
+
+                        // Wait for widget library to be ready
+                        if (!window.apxDns) {
+                            console.error('Approximated DNS widget library not loaded');
+                            dnsWidgetContainer.innerHTML = '<p style="color: #dc2626; font-size: 0.875rem;">❌ DNS widget library not loaded.</p>';
+                            return;
+                        }
+
+                        // Use the proxy IP from the API (Approximated proxy cluster IP)
+                        // Default to 37.16.24.200 if not provided
+                        const proxyIp = data.proxy_ip || "37.16.24.200";
+
+                        // Initialize Approximated widget with A record
+                        const config = {
+                            token: data.token,
+                            api_url: "https://cloud.approximated.app/api/dns",
+                            dnsRecords: [
+                                {
+                                    type: "A",
+                                    host: "@",
+                                    value: proxyIp,
+                                    ttl: 3600
+                                }
+                            ],
+                            domain: virtualHost,
+                            prefillDomain: virtualHost,
+                            verifyAutoScroll: true
+                        };
+
+                        window.apxDns.init(config);
+                        widgetInitialized = true;
+
+                        // Listen for widget events with better error handling
+                        document.addEventListener('apx-dnswidget-records-completely-verified', function(e) {
+                            console.log('DNS records verified successfully!', e.detail);
+                            dnsVerified = true;
+
+                            // Show success message
+                            const successMessage = document.getElementById('dns-success-message');
+                            if (successMessage) {
+                                successMessage.style.display = 'block';
+                            }
+
+                            // Optionally hide the widget details to show clean success state
+                            const widgetDiv = document.getElementById('apxdnswidget');
+                            if (widgetDiv) {
+                                widgetDiv.style.display = 'none';
+                            }
+                        });
+
+                        document.addEventListener('apx-dnswidget-records-failed-verification', function(e) {
+                            console.log('DNS verification failed:', e.detail);
+                            dnsVerified = false;
+
+                            // Hide success message if shown
+                            const successMessage = document.getElementById('dns-success-message');
+                            if (successMessage) {
+                                successMessage.style.display = 'none';
+                            }
+                        });
+
+                        // Listen for error events from the widget
+                        document.addEventListener('apx-dnswidget-error', function(e) {
+                            console.error('DNS widget error:', e.detail);
+                            // Don't show intrusive errors to users, just log them
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error initializing DNS widget:', error);
+                    dnsWidgetContainer.innerHTML = '<p style="color: #dc2626; font-size: 0.875rem;">❌ Error initializing DNS widget. Check console for details.</p>';
+                }
+            }
+        } else {
+            dnsWidgetContainer.style.display = 'none';
+        }
+    }
+
+    // Watch for changes to virtual host (debounced)
+    virtualHostInput.addEventListener('input', function() {
+        // Clear existing timer
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+        }
+
+        // Set new timer - wait 500ms after user stops typing
+        debounceTimer = setTimeout(function() {
+            // Reset widget on domain change - reinitialize with new domain
+            widgetInitialized = false;
+            dnsVerified = false;
+
+            // Hide success message
+            const successMessage = document.getElementById('dns-success-message');
+            if (successMessage) {
+                successMessage.style.display = 'none';
+            }
+
+            // Clear and show widget div
+            const widgetDiv = document.getElementById('apxdnswidget');
+            if (widgetDiv) {
+                widgetDiv.innerHTML = '';
+                widgetDiv.style.display = 'block';
+            }
+
+            initializeDNSWidget();
+        }, 500);
+    });
+
+    // Initialize on page load if virtual host has a value
+    initializeDNSWidget();
+
+    // Show/hide domain registration container based on virtual host
+    function updateDomainRegistrationVisibility() {
+        const virtualHost = virtualHostInput.value.trim();
+        const domainRegistrationContainer = document.getElementById('domain-registration-container');
+
+        if (virtualHost && domainRegistrationContainer) {
+            domainRegistrationContainer.style.display = 'block';
+        } else if (domainRegistrationContainer) {
+            domainRegistrationContainer.style.display = 'none';
+        }
+    }
+
+    // Watch for virtual host changes to show/hide registration container
+    virtualHostInput.addEventListener('input', updateDomainRegistrationVisibility);
+    updateDomainRegistrationVisibility(); // Initial check
+
+    // Form submission handler - show warning if DNS not verified
+    const accountForm = document.getElementById('account-settings-form');
+    if (accountForm) {
+        accountForm.addEventListener('submit', function(e) {
+            const virtualHost = virtualHostInput.value.trim();
+            const warningBanner = document.getElementById('dns-warning-banner');
+
+            // If virtual host is set but DNS not verified, show warning
+            if (virtualHost && !dnsVerified) {
+                // Show warning banner
+                if (warningBanner) {
+                    warningBanner.style.display = 'block';
+                    // Scroll to warning
+                    warningBanner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+
+                // Prevent submission and ask for confirmation
+                e.preventDefault();
+
+                if (confirm('⚠️ DNS records have not been verified yet.\n\nYour custom domain may not work until DNS is properly configured.\n\nDo you want to save anyway?')) {
+                    // User confirmed, submit the form
+                    accountForm.submit();
+                }
+            } else {
+                // Hide warning banner if shown
+                if (warningBanner) {
+                    warningBanner.style.display = 'none';
+                }
+            }
+        });
+    }
+});
+
+// Domain Registration Functions (defined globally for onclick handlers)
+async function checkDomainRegistrationStatus() {
+    const virtualHostInput = document.getElementById('virtual_host');
+    const domain = virtualHostInput.value.trim();
+
+    if (!domain) {
+        alert('Please enter a domain first');
+        return;
+    }
+
+    const statusIcon = document.getElementById('domain-status-icon');
+    const statusText = document.getElementById('domain-status-text');
+    const statusDetails = document.getElementById('domain-status-details');
+    const registerBtn = document.getElementById('register-domain-btn');
+    const unregisterBtn = document.getElementById('unregister-domain-btn');
+    const checkBtn = document.getElementById('check-domain-status-btn');
+
+    // Show loading state
+    statusIcon.textContent = '⏳';
+    statusText.textContent = 'Checking status...';
+    statusDetails.textContent = '';
+    checkBtn.disabled = true;
+
+    try {
+        const scriptName = document.getElementById('settings-config').dataset.scriptName || '';
+        const tenantId = document.getElementById('settings-config').dataset.tenantId;
+
+        const response = await fetch(`${scriptName}/tenant/${tenantId}/settings/approximated-domain-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domain: domain })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            if (data.registered) {
+                // Domain is registered
+                statusIcon.textContent = '✅';
+                statusText.textContent = 'Domain Registered';
+
+                let details = [];
+                if (data.ssl_active) {
+                    details.push('HTTPS/TLS active');
+                } else if (data.tls_enabled) {
+                    details.push('TLS certificate pending (wait 1-2 minutes)');
+                } else {
+                    details.push('TLS not yet active');
+                }
+
+                if (data.target_address) {
+                    details.push(`Backend: ${data.target_address}`);
+                }
+
+                if (data.status) {
+                    details.push(`Status: ${data.status}`);
+                }
+
+                statusDetails.textContent = details.join(' • ');
+                registerBtn.style.display = 'none';
+                unregisterBtn.style.display = 'inline-block';
+            } else {
+                // Domain not registered
+                statusIcon.textContent = '❌';
+                statusText.textContent = 'Domain Not Registered';
+                statusDetails.textContent = 'Click "Register Domain" to enable HTTPS/TLS';
+                registerBtn.style.display = 'inline-block';
+                unregisterBtn.style.display = 'none';
+            }
+        } else {
+            statusIcon.textContent = '⚠️';
+            statusText.textContent = 'Check Failed';
+            statusDetails.textContent = data.error || 'Unknown error';
+            registerBtn.style.display = 'none';
+            unregisterBtn.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error checking domain status:', error);
+        statusIcon.textContent = '⚠️';
+        statusText.textContent = 'Error';
+        statusDetails.textContent = error.message;
+        registerBtn.style.display = 'none';
+        unregisterBtn.style.display = 'none';
+    } finally {
+        checkBtn.disabled = false;
+    }
+}
+
+async function registerDomain() {
+    const virtualHostInput = document.getElementById('virtual_host');
+    const domain = virtualHostInput.value.trim();
+
+    if (!domain) {
+        alert('Please enter a domain first');
+        return;
+    }
+
+    if (!confirm(`Register domain ${domain}?\n\nThis will:\n• Issue HTTPS/TLS certificate\n• Enable traffic routing\n• Take 1-2 minutes to complete`)) {
+        return;
+    }
+
+    const registerBtn = document.getElementById('register-domain-btn');
+    registerBtn.disabled = true;
+    registerBtn.textContent = 'Registering...';
+
+    try {
+        const scriptName = document.getElementById('settings-config').dataset.scriptName || '';
+        const tenantId = document.getElementById('settings-config').dataset.tenantId;
+
+        const response = await fetch(`${scriptName}/tenant/${tenantId}/settings/approximated-register-domain`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domain: domain })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`✅ ${data.message}\n\nWait 1-2 minutes for TLS certificate to be issued.`);
+            // Refresh status
+            await checkDomainRegistrationStatus();
+        } else {
+            alert(`❌ Registration failed:\n${data.error}`);
+        }
+    } catch (error) {
+        console.error('Error registering domain:', error);
+        alert(`❌ Error: ${error.message}`);
+    } finally {
+        registerBtn.disabled = false;
+        registerBtn.textContent = 'Register Domain';
+    }
+}
+
+async function unregisterDomain() {
+    const virtualHostInput = document.getElementById('virtual_host');
+    const domain = virtualHostInput.value.trim();
+
+    if (!domain) {
+        alert('Please enter a domain first');
+        return;
+    }
+
+    if (!confirm(`⚠️ Unregister domain ${domain}?\n\nThis will:\n• Remove HTTPS/TLS certificate\n• Stop traffic routing\n• Domain will stop working\n\nAre you sure?`)) {
+        return;
+    }
+
+    const unregisterBtn = document.getElementById('unregister-domain-btn');
+    unregisterBtn.disabled = true;
+    unregisterBtn.textContent = 'Unregistering...';
+
+    try {
+        const scriptName = document.getElementById('settings-config').dataset.scriptName || '';
+        const tenantId = document.getElementById('settings-config').dataset.tenantId;
+
+        const response = await fetch(`${scriptName}/tenant/${tenantId}/settings/approximated-unregister-domain`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ domain: domain })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(`✅ ${data.message}`);
+            // Refresh status
+            await checkDomainRegistrationStatus();
+        } else {
+            alert(`❌ Unregistration failed:\n${data.error}`);
+        }
+    } catch (error) {
+        console.error('Error unregistering domain:', error);
+        alert(`❌ Error: ${error.message}`);
+    } finally {
+        unregisterBtn.disabled = false;
+        unregisterBtn.textContent = 'Unregister Domain';
+    }
+}
+</script>
+{% endif %}
+
+<script>
+// Measurement Providers Functions
+function addMeasurementProvider() {
+    const container = document.getElementById('measurement-providers-container');
+    const providerItem = document.createElement('div');
+    providerItem.className = 'measurement-provider-item';
+    providerItem.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; padding: 0.5rem; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px;';
+
+    providerItem.innerHTML = `
+        <input type="radio" name="default_measurement_provider" value="" onchange="markDefaultProvider(this)">
+        <input type="text" value="" class="provider-name-input"
+               style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px;"
+               placeholder="e.g., Google Ad Manager with IAS">
+        <button type="button" class="btn btn-sm btn-secondary" onclick="removeProvider(this)" title="Remove">
+            <i class="fas fa-times"></i>
+        </button>
+    `;
+
+    container.appendChild(providerItem);
+}
+
+function removeProvider(button) {
+    const providerItem = button.closest('.measurement-provider-item');
+    const container = document.getElementById('measurement-providers-container');
+
+    // Don't allow removing the last provider
+    const items = container.querySelectorAll('.measurement-provider-item');
+    if (items.length <= 1) {
+        alert('You must have at least one measurement provider.');
+        return;
+    }
+
+    providerItem.remove();
+}
+
+function markDefaultProvider(radio) {
+    // Update the radio button value to match the text input
+    const providerItem = radio.closest('.measurement-provider-item');
+    const textInput = providerItem.querySelector('.provider-name-input');
+    radio.value = textInput.value;
+}
+
+// Handle measurement providers form submission
+document.addEventListener('DOMContentLoaded', function() {
+    const businessRulesForm = document.getElementById('business-rules-form');
+    if (businessRulesForm) {
+        businessRulesForm.addEventListener('submit', function(e) {
+            // Collect all measurement providers
+            const container = document.getElementById('measurement-providers-container');
+            const providerItems = container.querySelectorAll('.measurement-provider-item');
+
+            // Remove any existing hidden provider inputs
+            const existingInputs = businessRulesForm.querySelectorAll('input[name^="provider_name_"]');
+            existingInputs.forEach(input => input.remove());
+
+            // Add provider names as hidden inputs
+            providerItems.forEach((item, index) => {
+                const textInput = item.querySelector('.provider-name-input');
+                const providerName = textInput.value.trim();
+
+                if (providerName) {
+                    const hiddenInput = document.createElement('input');
+                    hiddenInput.type = 'hidden';
+                    hiddenInput.name = `provider_name_${index}`;
+                    hiddenInput.value = providerName;
+                    businessRulesForm.appendChild(hiddenInput);
+                }
+            });
+
+            // Update the default provider radio value
+            const checkedRadio = container.querySelector('input[name="default_measurement_provider"]:checked');
+            if (checkedRadio) {
+                const providerItem = checkedRadio.closest('.measurement-provider-item');
+                const textInput = providerItem.querySelector('.provider-name-input');
+                checkedRadio.value = textInput.value;
+            }
+        });
+    }
+});
+
+// AXE Segment Targeting configuration moved to Inventory page (inventory_unified.html)
+</script>
+
+<!-- Add Currency Modal -->
+<div class="modal fade" id="addCurrencyModal" tabindex="-1" aria-labelledby="addCurrencyModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addCurrencyModalLabel">Add Currency</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="new-currency-code">Currency</label>
+                    {% if adapter_config and adapter_config.get('network_currency') %}
+                    {# GAM tenant: show dropdown with only GAM-supported currencies #}
+                    {% set gam_currencies = [adapter_config.get('network_currency')] + (adapter_config.get('secondary_currencies') or []) %}
+                    <select class="form-control" id="new-currency-code">
+                        <option value="">Select a currency...</option>
+                        {% for currency in gam_currencies %}
+                        <option value="{{ currency }}">{{ currency }}{% if loop.first %} (Primary){% endif %}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="form-text text-muted">Currencies supported by your GAM network</small>
+                    {% else %}
+                    {# Non-GAM tenant (mock adapter): show text input with autocomplete #}
+                    <input type="text" class="form-control" id="new-currency-code" list="currency-list" placeholder="e.g., EUR, GBP, CAD" maxlength="3" style="text-transform: uppercase;">
+                    <datalist id="currency-list">
+                        {% for currency in available_currencies %}
+                        <option value="{{ currency.code }}">{{ currency.name }}</option>
+                        {% endfor %}
+                    </datalist>
+                    <small class="form-text text-muted">Start typing to see available currencies (ISO 4217 codes)</small>
+                    {% endif %}
+                </div>
+                <div class="form-group mt-3">
+                    <label for="new-currency-min">Min Package Budget (optional)</label>
+                    <input type="number" class="form-control" id="new-currency-min" min="0" step="0.01" placeholder="No minimum">
+                </div>
+                <div class="form-group mt-3">
+                    <label for="new-currency-max">Max Daily Package Spend (optional)</label>
+                    <input type="number" class="form-control" id="new-currency-max" min="0" step="0.01" placeholder="No maximum">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="addCurrencyLimit()">Add Currency</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Principal Mappings Modal -->
+<div class="modal fade" id="editPrincipalModal" tabindex="-1" aria-labelledby="editPrincipalModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editPrincipalModalTitle">Edit Platform Mappings</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="editPrincipalForm">
+                    <!-- Content loaded dynamically -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveMappingsBtn" onclick="savePrincipalMappings()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

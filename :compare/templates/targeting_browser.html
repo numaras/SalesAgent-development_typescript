@@ -1,0 +1,1011 @@
+{% extends "base.html" %}
+
+{% block title %}Targeting Criteria Browser - {{ tenant.name }}{% endblock %}
+
+{% block content %}
+<style>
+    /* Ensure tab-content wrapper is always visible */
+    .targeting-browser .tab-content {
+        display: block !important;
+    }
+
+    /* Fix Bootstrap tab visibility - allow proper tab switching */
+    .targeting-browser .tab-pane {
+        display: none;
+    }
+
+    .targeting-browser .tab-pane.active.show {
+        display: block;
+    }
+
+    /* Ensure list items are visible */
+    .targeting-browser .list-group-item {
+        display: block;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: -1px;
+        background-color: #fff;
+        border: 1px solid rgba(0,0,0,.125);
+        color: #212529;
+        text-decoration: none;
+        width: 100%;
+        min-height: 40px;
+    }
+
+    /* Compact key titles */
+    .targeting-browser .list-group-item h6 {
+        font-size: 0.9rem;
+        margin-bottom: 0.15rem;
+        font-weight: 600;
+    }
+
+    /* Compact key subtitles */
+    .targeting-browser .list-group-item small {
+        font-size: 0.75rem;
+        line-height: 1.2;
+    }
+
+    /* Compact badge spacing */
+    .targeting-browser .list-group-item .badge {
+        font-size: 0.7rem;
+        padding: 0.2rem 0.4rem;
+    }
+
+    .targeting-browser .list-group-item:hover {
+        background-color: #f8f9fa;
+        cursor: pointer;
+    }
+
+    .targeting-browser .list-group-item.active {
+        background-color: #007bff;
+        border-color: #007bff;
+        color: white;
+    }
+</style>
+<div class="container-fluid targeting-browser">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Targeting Criteria Browser</h1>
+        <div>
+            <button id="sync-targeting-btn" class="btn btn-primary" onclick="syncTargetingData()">
+                <i class="fas fa-sync"></i> <span id="sync-btn-text">Sync Targeting Data</span>
+            </button>
+            <a href="{{ url_for('inventory.inventory_browser', tenant_id=tenant.tenant_id) }}" class="btn btn-secondary">
+                ← Back to Inventory
+            </a>
+        </div>
+    </div>
+
+    <!-- Sync Info Alert -->
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        <strong>Note:</strong> This page displays targeting criteria (custom targeting keys, audience segments, and labels) synced from your ad server.
+        To sync ad units and placements, visit the <a href="{{ url_for('inventory.inventory_browser', tenant_id=tenant.tenant_id) }}" class="alert-link">Inventory Browser</a>.
+    </div>
+
+    <!-- Last Sync Info -->
+    <div class="alert alert-info" id="sync-info">
+        <i class="fas fa-info-circle"></i>
+        <span id="sync-message">Loading targeting data...</span>
+    </div>
+
+    <!-- Hidden inputs for AXE configuration -->
+    <input type="hidden" id="axe_include_key"
+           value="{{ adapter_config.get('axe_include_key', '') if adapter_config else '' }}">
+    <input type="hidden" id="axe_exclude_key"
+           value="{{ adapter_config.get('axe_exclude_key', '') if adapter_config else '' }}">
+    <input type="hidden" id="axe_macro_key"
+           value="{{ adapter_config.get('axe_macro_key', '') if adapter_config else '' }}">
+
+    <!-- Tabs for different targeting types -->
+    <ul class="nav nav-tabs mb-4" role="tablist">
+        <li class="nav-item">
+            <a class="nav-link active" data-bs-toggle="tab" href="#custom-targeting" role="tab">
+                Custom Targeting
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="tab" href="#audience-segments" role="tab">
+                Audience Segments
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="tab" href="#labels" role="tab">
+                Labels
+            </a>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content" style="min-height: 700px;">
+        <!-- Custom Targeting Tab -->
+        <div class="tab-pane fade show active" id="custom-targeting" role="tabpanel">
+            <!-- AXE Configuration Card -->
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-diagram-3"></i> AXE Segment Configuration
+                        <a href="#" data-bs-toggle="modal" data-bs-target="#axeHelpModal" class="text-white float-end">
+                            <i class="bi bi-question-circle"></i> Help
+                        </a>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">
+                        Configure which GAM custom targeting keys represent AXE (Audience Exchange) segments.
+                        Per AdCP spec, you need three separate keys for different purposes.
+                    </p>
+
+                    <!-- Include Segments Row -->
+                    <div class="row mb-3 align-items-center">
+                        <div class="col-md-3">
+                            <strong>Include Segments</strong>
+                            <br><small class="text-muted">For axe_include_segment</small>
+                        </div>
+                        <div class="col-md-6">
+                            <select id="axe-include-key-select" class="form-select form-select-sm">
+                                <option value="">-- Select key or enter manually --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button class="btn btn-sm btn-success w-100" onclick="saveAxeKey('include')">
+                                <i class="bi bi-check"></i> Set Include Key
+                            </button>
+                            <div id="axe-include-status" class="mt-1"></div>
+                        </div>
+                    </div>
+
+                    <!-- Exclude Segments Row -->
+                    <div class="row mb-3 align-items-center">
+                        <div class="col-md-3">
+                            <strong>Exclude Segments</strong>
+                            <br><small class="text-muted">For axe_exclude_segment</small>
+                        </div>
+                        <div class="col-md-6">
+                            <select id="axe-exclude-key-select" class="form-select form-select-sm">
+                                <option value="">-- Select key or enter manually --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button class="btn btn-sm btn-success w-100" onclick="saveAxeKey('exclude')">
+                                <i class="bi bi-check"></i> Set Exclude Key
+                            </button>
+                            <div id="axe-exclude-status" class="mt-1"></div>
+                        </div>
+                    </div>
+
+                    <!-- Macro Segments Row -->
+                    <div class="row mb-3 align-items-center">
+                        <div class="col-md-3">
+                            <strong>Creative Macros</strong>
+                            <br><small class="text-muted">For enable_creative_macro</small>
+                        </div>
+                        <div class="col-md-6">
+                            <select id="axe-macro-key-select" class="form-select form-select-sm">
+                                <option value="">-- Select key or enter manually --</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button class="btn btn-sm btn-success w-100" onclick="saveAxeKey('macro')">
+                                <i class="bi bi-check"></i> Set Macro Key
+                            </button>
+                            <div id="axe-macro-status" class="mt-1"></div>
+                        </div>
+                    </div>
+
+                    <!-- Manual Entry (collapsed) -->
+                    <div class="mt-3">
+                        <details>
+                            <summary class="btn btn-link p-0 text-decoration-none">
+                                <i class="bi bi-pencil"></i> Enter custom key names manually
+                            </summary>
+                            <div class="card mt-2 border-secondary">
+                                <div class="card-body">
+                                    <div class="row g-2">
+                                        <div class="col-md-4">
+                                            <label class="form-label small">Include Key:</label>
+                                            <input type="text" id="axe-include-manual" class="form-control form-control-sm font-monospace" placeholder="e.g., axe_include">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small">Exclude Key:</label>
+                                            <input type="text" id="axe-exclude-manual" class="form-control form-control-sm font-monospace" placeholder="e.g., axe_exclude">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small">Macro Key:</label>
+                                            <input type="text" id="axe-macro-manual" class="form-control form-control-sm font-monospace" placeholder="e.g., axe_macro">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row" style="min-height: 600px;">
+                <div class="col-md-4" style="min-width: 350px;">
+                    <h3>Custom Targeting Keys</h3>
+                    <div class="input-group mb-3">
+                        <input type="text" class="form-control" id="search-keys" placeholder="Search keys...">
+                        <button class="btn btn-outline-secondary" type="button">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div class="list-group" id="keys-list" style="min-height: 400px; max-height: 600px; overflow-y: auto; background-color: #f8f9fa; border: 1px solid #dee2e6;">
+                        <!-- Keys will be loaded here -->
+                    </div>
+
+                    <!-- Manual Entry Option (collapsed by default) -->
+                    <div class="mt-3">
+                        <details>
+                            <summary class="btn btn-link p-0">
+                                <i class="bi bi-pencil"></i> Use a key not synced yet
+                            </summary>
+                            <div class="card mt-2">
+                                <div class="card-body">
+                                    <label class="form-label small">Enter custom targeting key name:</label>
+                                    <div class="input-group">
+                                        <input type="text"
+                                               id="axe-manual-key-input"
+                                               class="form-control form-control-sm font-monospace"
+                                               placeholder="e.g., axe_segment">
+                                        <button class="btn btn-sm btn-primary"
+                                                onclick="saveAxeKeyManual()">
+                                            Set as AXE Key
+                                        </button>
+                                    </div>
+                                    <div class="form-text">
+                                        Enter the exact name of your GAM custom targeting key.
+                                        Useful if setting up before syncing inventory.
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+                <div class="col-md-8" style="min-width: 500px;">
+                    <h3>Values for Selected Key</h3>
+                    <div id="selected-key-info" class="mb-3">
+                        <p class="text-muted">Select a key to view its values</p>
+                    </div>
+                    <div class="input-group mb-3">
+                        <input type="text" class="form-control" id="search-values" placeholder="Search values..." disabled>
+                        <button class="btn btn-outline-secondary" type="button" disabled>
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div id="values-list" style="max-height: 600px; overflow-y: auto;">
+                        <!-- Values will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audience Segments Tab -->
+        <div class="tab-pane fade" id="audience-segments" role="tabpanel">
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="search-audiences" placeholder="Search audiences...">
+                        <button class="btn btn-outline-secondary" type="button">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <select class="form-select" id="audience-type-filter">
+                        <option value="">All Types</option>
+                        <option value="FIRST_PARTY">First-Party Data</option>
+                        <option value="THIRD_PARTY">Third-Party Data</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="row" id="audience-cards">
+                <!-- Audience cards will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Labels Tab -->
+        <div class="tab-pane fade" id="labels" role="tabpanel">
+            <div class="input-group mb-3">
+                <input type="text" class="form-control" id="search-labels" placeholder="Search labels...">
+                <button class="btn btn-outline-secondary" type="button">
+                    <i class="fas fa-search"></i>
+                </button>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Label Name</th>
+                            <th>Type</th>
+                            <th>Category</th>
+                            <th>Status</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody id="labels-tbody">
+                        <!-- Labels will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- AXE Help Modal -->
+<div class="modal fade" id="axeHelpModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">About AXE Segment Targeting</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <h6>What is AXE?</h6>
+                <p>
+                    AXE (Audience Exchange) is a cross-platform audience segment format used in AdCP.
+                    It enables buyers to target first-party audience segments across multiple publishers.
+                </p>
+
+                <h6>Why Configure This?</h6>
+                <p>
+                    When buyers request targeting like <code>axe_include_segment: ["x8dj3k"]</code>,
+                    your system needs to know which GAM custom targeting key contains these segment IDs.
+                </p>
+
+                <h6>How It Works:</h6>
+                <ul>
+                    <li><strong>Include:</strong> <code>your_key=x8dj3k</code></li>
+                    <li><strong>Exclude:</strong> <code>NOT_your_key=y9kl4m</code></li>
+                </ul>
+
+                <h6>Common Key Names:</h6>
+                <ul>
+                    <li><code>axe_segment</code></li>
+                    <li><code>audience_id</code></li>
+                    <li><code>segment_key</code></li>
+                    <li><code>external_audience</code></li>
+                </ul>
+
+                <p class="mb-0">
+                    <a href="https://adcontextprotocol.org/docs/targeting#axe-segments" target="_blank">
+                        Learn more in the AdCP documentation →
+                    </a>
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sync Progress Modal -->
+<script>
+const tenantId = '{{ tenant.tenant_id }}';
+const scriptRoot = '{{ request.script_root }}';  // Base path for URLs (e.g., '/admin' or '')
+let currentKeyId = null;
+let targetingData = {
+    customKeys: [],
+    customValues: {},
+    audiences: [],
+    labels: []
+};
+
+// Sync targeting data from ad server
+async function syncTargetingData() {
+    const btn = document.getElementById('sync-targeting-btn');
+    const btnText = document.getElementById('sync-btn-text');
+    const syncMessage = document.getElementById('sync-message');
+
+    // Disable button and show loading state
+    btn.disabled = true;
+    btnText.textContent = 'Syncing...';
+    syncMessage.textContent = 'Starting sync...';
+
+    try {
+        const response = await fetch(`{{ script_name }}/api/tenant/${tenantId}/inventory/sync`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                types: ['custom_targeting', 'audience_segments', 'labels'],
+                mode: 'incremental'  // Incremental is faster for targeting data
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Sync failed');
+        }
+
+        const result = await response.json();
+        syncMessage.textContent = `Sync started (ID: ${result.sync_id}). Refreshing data in 3 seconds...`;
+
+        // Wait a bit for sync to complete, then reload data
+        setTimeout(async () => {
+            await loadTargetingData();
+            syncMessage.textContent = 'Sync completed. Data refreshed.';
+            setTimeout(() => {
+                syncMessage.textContent = `Last synced: just now`;
+            }, 2000);
+        }, 3000);
+
+    } catch (error) {
+        console.error('Sync error:', error);
+        syncMessage.textContent = `Sync failed: ${error.message}`;
+    } finally {
+        // Re-enable button
+        btn.disabled = false;
+        btnText.textContent = 'Sync Targeting Data';
+    }
+}
+
+// Load all targeting data
+async function loadTargetingData() {
+    try {
+        const response = await fetch(`{{ script_name }}/api/tenant/${tenantId}/targeting/all`, {
+            credentials: 'same-origin'
+        });
+
+        // Check if we got redirected to login
+        if (response.redirected || response.status === 302) {
+            const loginUrl = scriptRoot + `/tenant/${tenantId}/login`;
+            window.location.href = response.url || loginUrl;
+            return;
+        }
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('API Error:', errorText);
+            throw new Error(`Failed to load targeting data: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Merge data instead of replacing to preserve customValues cache
+        targetingData.customKeys = data.customKeys || [];
+        targetingData.audiences = data.audiences || [];
+        targetingData.labels = data.labels || [];
+        // Don't overwrite customValues - it's populated on-demand by loadCustomValues()
+
+        // Update UI
+        updateSyncInfo(data.last_sync);
+        renderCustomKeys();
+        renderAudiences();
+        renderLabels();
+
+    } catch (error) {
+        console.error('Error loading targeting data:', error);
+        document.getElementById('sync-message').textContent = 'Failed to load targeting data';
+    }
+}
+
+// Update sync info
+function updateSyncInfo(lastSync) {
+    const syncMessage = document.getElementById('sync-message');
+    if (lastSync) {
+        const date = new Date(lastSync);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / (1000 * 60));
+        const diffHours = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHours / 24);
+
+        let timeAgo;
+        if (diffDays > 0) {
+            timeAgo = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+        } else if (diffHours > 0) {
+            timeAgo = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+        } else if (diffMins > 0) {
+            timeAgo = `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+        } else {
+            timeAgo = 'just now';
+        }
+
+        syncMessage.innerHTML = `Last synced: ${date.toLocaleString()} (${timeAgo})`;
+
+        if (diffHours > 24) {
+            syncMessage.innerHTML += ' <span class="text-warning">- Consider refreshing</span>';
+        }
+    } else {
+        syncMessage.textContent = 'No sync data available - click Sync to discover targeting';
+    }
+}
+
+// Render custom targeting keys
+function renderCustomKeys() {
+    console.log('renderCustomKeys called');
+    const keysList = document.getElementById('keys-list');
+    // Get all three AXE keys
+    const axeIncludeKey = document.getElementById('axe_include_key').value;
+    const axeExcludeKey = document.getElementById('axe_exclude_key').value;
+    const axeMacroKey = document.getElementById('axe_macro_key').value;
+    console.log('keysList element:', keysList);
+    console.log('AXE keys:', { include: axeIncludeKey, exclude: axeExcludeKey, macro: axeMacroKey });
+
+    if (!keysList) {
+        console.error('keys-list element not found!');
+        return;
+    }
+
+    keysList.innerHTML = '';
+
+    const searchTerm = document.getElementById('search-keys').value.toLowerCase();
+    console.log('searchTerm:', searchTerm);
+
+    if (!targetingData.customKeys) {
+        console.error('No customKeys in targetingData!');
+        return;
+    }
+
+    const filteredKeys = targetingData.customKeys.filter(key =>
+        key.name.toLowerCase().includes(searchTerm) ||
+        (key.display_name || '').toLowerCase().includes(searchTerm)
+    );
+
+    // Sort keys alphabetically by display name
+    filteredKeys.sort((a, b) => {
+        const nameA = (a.display_name || a.name).toLowerCase();
+        const nameB = (b.display_name || b.name).toLowerCase();
+        return nameA.localeCompare(nameB);
+    });
+
+    console.log('filteredKeys count:', filteredKeys.length);
+
+    if (filteredKeys.length === 0) {
+        keysList.innerHTML = `
+            <div class="text-center p-4">
+                <i class="bi bi-search text-muted" style="font-size: 3rem;"></i>
+                <p class="text-muted mt-2">No custom targeting keys found</p>
+                <button class="btn btn-primary btn-sm" onclick="syncTargetingData()">
+                    <i class="fas fa-sync"></i> Sync from GAM
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    filteredKeys.forEach((key, index) => {
+        console.log(`Processing key ${index}:`, key.name);
+        // Check if this key is used for any AXE purpose
+        const isAxeInclude = key.name === axeIncludeKey;
+        const isAxeExclude = key.name === axeExcludeKey;
+        const isAxeMacro = key.name === axeMacroKey;
+        const isAxeKey = isAxeInclude || isAxeExclude || isAxeMacro;
+
+        const item = document.createElement('div');
+        item.className = 'list-group-item';
+
+        // Three-column layout: Key info | Metadata | AXE action
+        const row = document.createElement('div');
+        row.className = 'row align-items-center';
+
+        // Column 1: Key info (clickable to view values)
+        const keyInfoCol = document.createElement('div');
+        keyInfoCol.className = 'col-7';
+        keyInfoCol.role = 'button';
+        keyInfoCol.onclick = () => selectKey(key);
+
+        const keyInfoDiv = document.createElement('div');
+        const title = document.createElement('h6');
+        title.className = 'mb-1';
+        title.textContent = key.display_name || key.name;
+
+        if (isAxeKey) {
+            const axeBadge = document.createElement('span');
+            axeBadge.className = 'badge bg-success ms-2';
+            // Show which type(s) of AXE key this is
+            const axeTypes = [];
+            if (isAxeInclude) axeTypes.push('Include');
+            if (isAxeExclude) axeTypes.push('Exclude');
+            if (isAxeMacro) axeTypes.push('Macro');
+            axeBadge.textContent = `🎯 AXE (${axeTypes.join(', ')})`;
+            title.appendChild(axeBadge);
+        }
+
+        keyInfoDiv.appendChild(title);
+
+        const subtitle = document.createElement('small');
+        subtitle.className = 'text-muted';
+        subtitle.textContent = `Key: ${key.name}`;
+        keyInfoDiv.appendChild(subtitle);
+
+        keyInfoCol.appendChild(keyInfoDiv);
+        row.appendChild(keyInfoCol);
+
+        // Column 2: Metadata
+        const metadataCol = document.createElement('div');
+        metadataCol.className = 'col-3 text-end';
+
+        const typeBadge = document.createElement('span');
+        typeBadge.className = `badge bg-${key.type === 'PREDEFINED' ? 'primary' : 'secondary'}`;
+        typeBadge.textContent = key.type || 'UNKNOWN';
+        metadataCol.appendChild(typeBadge);
+
+        if (key.metadata && key.metadata.values_count) {
+            metadataCol.appendChild(document.createElement('br'));
+            const valueCount = document.createElement('small');
+            valueCount.className = 'text-muted';
+            valueCount.textContent = `${key.metadata.values_count} values`;
+            metadataCol.appendChild(valueCount);
+        }
+
+        row.appendChild(metadataCol);
+
+        // Column 3: AXE Key Badge (no action button - use the AXE Configuration modal instead)
+        const actionCol = document.createElement('div');
+        actionCol.className = 'col-2 text-end';
+
+        // Note: We don't add action buttons here anymore since AXE keys are managed via the
+        // dedicated AXE Configuration modal at the top of the page
+
+        row.appendChild(actionCol);
+        item.appendChild(row);
+        keysList.appendChild(item);
+
+        if (index === 0) {
+            console.log('First item created and appended');
+            console.log('Item element:', item);
+            console.log('Item in DOM?', keysList.contains(item));
+        }
+    });
+
+    console.log('Finished rendering, keysList innerHTML length:', keysList.innerHTML.length);
+    console.log('keysList children count:', keysList.children.length);
+
+    // Populate AXE key dropdowns
+    populateAxeDropdowns();
+
+    // Update status displays
+    updateAllAxeStatuses();
+}
+
+// Populate the three AXE key dropdowns with available custom targeting keys
+function populateAxeDropdowns() {
+    const dropdownIds = ['axe-include-key-select', 'axe-exclude-key-select', 'axe-macro-key-select'];
+
+    dropdownIds.forEach(id => {
+        const select = document.getElementById(id);
+        if (!select) return;
+
+        // Keep first option (placeholder)
+        select.innerHTML = '<option value="">-- Select key or enter manually --</option>';
+
+        // Add all custom targeting keys as options
+        if (targetingData.customKeys) {
+            targetingData.customKeys.forEach(key => {
+                const option = document.createElement('option');
+                option.value = key.name;
+                option.textContent = key.display_name || key.name;
+                select.appendChild(option);
+            });
+        }
+    });
+
+    // Set selected values from current configuration
+    const includeKey = document.getElementById('axe_include_key').value;
+    const excludeKey = document.getElementById('axe_exclude_key').value;
+    const macroKey = document.getElementById('axe_macro_key').value;
+
+    if (includeKey) document.getElementById('axe-include-key-select').value = includeKey;
+    if (excludeKey) document.getElementById('axe-exclude-key-select').value = excludeKey;
+    if (macroKey) document.getElementById('axe-macro-key-select').value = macroKey;
+}
+
+// Select a custom targeting key
+async function selectKey(key) {
+    currentKeyId = key.id;
+
+    // Update UI
+    document.querySelectorAll('#keys-list .list-group-item').forEach(item => {
+        item.classList.remove('active');
+    });
+    event.target.closest('.list-group-item').classList.add('active');
+
+    // Update selected key info
+    document.getElementById('selected-key-info').innerHTML = `
+        <h5>${key.display_name || key.name}</h5>
+        <p class="mb-2">
+            <span class="text-muted">Type:</span> ${key.type}
+            ${key.metadata && key.metadata.reportable_type ? `| <span class="text-muted">Reportable:</span> ${key.metadata.reportable_type}` : ''}
+        </p>
+        <div class="spinner-border spinner-border-sm" role="status">
+            <span class="visually-hidden">Loading values...</span>
+        </div>
+    `;
+
+    // Enable value search
+    document.getElementById('search-values').disabled = false;
+    document.querySelector('#search-values + button').disabled = false;
+
+    // Load values for this key from the API
+    await loadCustomValues(key.id);
+}
+
+// Load custom targeting values from API
+async function loadCustomValues(keyId) {
+    try {
+        const response = await fetch(`{{ script_name }}/api/tenant/${tenantId}/targeting/values/${keyId}`, {
+            credentials: 'same-origin'
+        });
+
+        // Check if we got redirected to login
+        if (response.redirected || response.status === 302) {
+            const loginUrl = scriptRoot + `/tenant/${tenantId}/login`;
+            window.location.href = response.url || loginUrl;
+            return;
+        }
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('API Error:', errorText);
+            throw new Error(`Failed to load values: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Store values in targetingData
+        targetingData.customValues[keyId] = data.values || [];
+
+        // Update the selected key info to show count
+        const key = targetingData.customKeys.find(k => k.id === keyId);
+        if (key) {
+            document.getElementById('selected-key-info').innerHTML = `
+                <h5>${key.display_name || key.name}</h5>
+                <p class="mb-2">
+                    <span class="text-muted">Type:</span> ${key.type}
+                    ${key.metadata && key.metadata.reportable_type ? `| <span class="text-muted">Reportable:</span> ${key.metadata.reportable_type}` : ''}
+                    <br>
+                    <span class="text-muted">Values:</span> <strong>${data.count}</strong>
+                </p>
+            `;
+        }
+
+        // Render the values
+        renderCustomValues(keyId);
+
+    } catch (error) {
+        console.error('Error loading custom values:', error);
+        document.getElementById('values-list').innerHTML =
+            '<div class="alert alert-danger">Failed to load values. Please try again.</div>';
+    }
+}
+
+// Render custom targeting values
+function renderCustomValues(keyId) {
+    const valuesList = document.getElementById('values-list');
+    const values = targetingData.customValues[keyId] || [];
+
+    const searchTerm = document.getElementById('search-values').value.toLowerCase();
+    const filteredValues = values.filter(value =>
+        value.name.toLowerCase().includes(searchTerm) ||
+        (value.display_name || '').toLowerCase().includes(searchTerm)
+    );
+
+    if (filteredValues.length === 0) {
+        if (values.length === 0) {
+            valuesList.innerHTML = '<div class="alert alert-info text-center">No values found for this key</div>';
+        } else {
+            valuesList.innerHTML = '<div class="alert alert-warning text-center">No values match your search</div>';
+        }
+        return;
+    }
+
+    valuesList.innerHTML = `
+        <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+            ${filteredValues.map(value => `
+                <div class="col">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h6 class="card-title">${value.display_name || value.name}</h6>
+                            <p class="card-text small text-muted mb-1">Value: <code>${value.name}</code></p>
+                            <p class="card-text small mb-0">
+                                ${value.match_type ? `<span class="badge bg-info">${value.match_type}</span>` : ''}
+                                ${value.status && value.status !== 'ACTIVE' ? `<span class="badge bg-warning">${value.status}</span>` : '<span class="badge bg-success">ACTIVE</span>'}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+        <div class="mt-3 text-muted text-center">
+            <small>Showing ${filteredValues.length} of ${values.length} values</small>
+        </div>
+    `;
+}
+
+// Render audience segments
+function renderAudiences() {
+    const audienceCards = document.getElementById('audience-cards');
+    const searchTerm = document.getElementById('search-audiences').value.toLowerCase();
+    const typeFilter = document.getElementById('audience-type-filter').value;
+
+    let filteredAudiences = targetingData.audiences.filter(audience =>
+        audience.name.toLowerCase().includes(searchTerm) ||
+        (audience.description && audience.description.toLowerCase().includes(searchTerm))
+    );
+
+    if (typeFilter) {
+        filteredAudiences = filteredAudiences.filter(audience => audience.type === typeFilter);
+    }
+
+    if (filteredAudiences.length === 0) {
+        audienceCards.innerHTML = '<div class="col-12"><p class="text-muted text-center">No audiences found</p></div>';
+        return;
+    }
+
+    audienceCards.innerHTML = filteredAudiences.map(audience => `
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h5 class="card-title">${audience.name}</h5>
+                        ${audience.type ? `<span class="badge bg-${audience.type === 'FIRST_PARTY' ? 'success' : 'info'}">
+                            ${audience.type.replace('_', ' ')}
+                        </span>` : ''}
+                    </div>
+                    ${audience.description ? `<p class="card-text small">${audience.description}</p>` : ''}
+                    <div class="mt-auto">
+                        ${audience.size ? `<p class="mb-1"><small>Size: ${audience.size.toLocaleString()}</small></p>` : ''}
+                        ${audience.data_provider_name ? `<p class="mb-1"><small>Provider: ${audience.data_provider_name}</small></p>` : ''}
+                        <p class="mb-0">
+                            ${audience.segment_type ? `<span class="badge bg-secondary">${audience.segment_type}</span>` : ''}
+                            ${audience.status && audience.status !== 'ACTIVE' ? `<span class="badge bg-warning">${audience.status}</span>` : ''}
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Render labels
+function renderLabels() {
+    const labelsTbody = document.getElementById('labels-tbody');
+    const searchTerm = document.getElementById('search-labels').value.toLowerCase();
+
+    const filteredLabels = targetingData.labels.filter(label =>
+        label.name.toLowerCase().includes(searchTerm) ||
+        (label.description && label.description.toLowerCase().includes(searchTerm))
+    );
+
+    if (filteredLabels.length === 0) {
+        labelsTbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No labels found</td></tr>';
+        return;
+    }
+
+    labelsTbody.innerHTML = filteredLabels.map(label => `
+        <tr>
+            <td><strong>${label.name}</strong></td>
+            <td>${label.label_type || 'N/A'}</td>
+            <td>${label.ad_category || 'N/A'}</td>
+            <td>
+                <span class="badge bg-${label.is_active ? 'success' : 'secondary'}">
+                    ${label.is_active ? 'Active' : 'Inactive'}
+                </span>
+            </td>
+            <td>${label.description || ''}</td>
+        </tr>
+    `).join('');
+}
+
+// Search handlers
+document.getElementById('search-keys').addEventListener('input', renderCustomKeys);
+document.getElementById('search-values').addEventListener('input', () => {
+    if (currentKeyId) renderCustomValues(currentKeyId);
+});
+document.getElementById('search-audiences').addEventListener('input', renderAudiences);
+document.getElementById('audience-type-filter').addEventListener('change', renderAudiences);
+document.getElementById('search-labels').addEventListener('input', renderLabels);
+
+// Load data on page load
+loadTargetingData();
+
+// ===========================================================================
+// AXE Segment Targeting Configuration (Inline)
+// ===========================================================================
+
+// Save AXE key configuration for specific type (include, exclude, macro)
+async function saveAxeKey(keyType) {
+    try {
+        // Get the selected key name from dropdown or manual input
+        const selectElement = document.getElementById(`axe-${keyType}-key-select`);
+        const manualElement = document.getElementById(`axe-${keyType}-manual`);
+        let keyName = selectElement.value;
+
+        // If no dropdown selection, check manual input
+        if (!keyName && manualElement.value) {
+            keyName = manualElement.value.trim();
+        }
+
+        if (!keyName) {
+            showToast(`Please select or enter a key name for ${keyType} segments`, 'warning');
+            return;
+        }
+
+        // Map type to database field name
+        const fieldMap = {
+            'include': 'axe_include_key',
+            'exclude': 'axe_exclude_key',
+            'macro': 'axe_macro_key'
+        };
+        const fieldName = fieldMap[keyType];
+
+        // Save to server
+        const response = await fetch(scriptRoot + `/tenant/${tenantId}/settings/adapter`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                adapter: '{{ tenant.ad_server }}',
+                [fieldName]: keyName
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to save configuration');
+        }
+
+        // Update hidden field
+        document.getElementById(fieldName).value = keyName;
+
+        // Update status display
+        updateAxeKeyStatus(keyType, keyName);
+
+        // Show success toast
+        showToast(`✅ ${keyType.charAt(0).toUpperCase() + keyType.slice(1)} key set to: ${keyName}`, 'success');
+
+    } catch (error) {
+        console.error(`Error saving ${keyType} AXE key:`, error);
+        showToast(`❌ Failed to save ${keyType} key configuration`, 'danger');
+    }
+}
+
+// Update status display for a specific AXE key type
+function updateAxeKeyStatus(keyType, keyName) {
+    const statusElement = document.getElementById(`axe-${keyType}-status`);
+    if (keyName && keyName !== '') {
+        statusElement.innerHTML = `<small class="text-success"><i class="bi bi-check-circle-fill"></i> <code>${keyName}</code></small>`;
+    } else {
+        statusElement.innerHTML = `<small class="text-muted">Not configured</small>`;
+    }
+}
+
+// Update all AXE status displays on page load
+function updateAllAxeStatuses() {
+    updateAxeKeyStatus('include', document.getElementById('axe_include_key').value);
+    updateAxeKeyStatus('exclude', document.getElementById('axe_exclude_key').value);
+    updateAxeKeyStatus('macro', document.getElementById('axe_macro_key').value);
+}
+
+// Manual entry save
+async function saveAxeKeyManual() {
+    const input = document.getElementById('axe-manual-key-input');
+    const keyName = input.value.trim();
+
+    if (!keyName) {
+        showToast('Please enter a key name', 'warning');
+        return;
+    }
+
+    await saveAxeKeyToServer(keyName);
+    input.value = '';  // Clear input
+}
+
+// Simple toast notification
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `alert alert-${type} position-fixed top-0 end-0 m-3`;
+    toast.style.zIndex = '9999';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => toast.remove(), 3000);
+}
+
+</script>
+{% endblock %}

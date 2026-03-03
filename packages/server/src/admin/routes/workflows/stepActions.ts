@@ -6,6 +6,7 @@ import { creatives } from "../../../db/schema/creatives.js";
 import { contexts } from "../../../db/schema/contexts.js";
 import { mediaBuys } from "../../../db/schema/mediaBuys.js";
 import { objectWorkflowMappings, workflowSteps } from "../../../db/schema/workflowSteps.js";
+import { executeApprovedMediaBuyViaAdapter } from "../../../services/mediaBuyAdapterCall.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
 import { getAdminSession } from "../../services/sessionService.js";
 
@@ -22,7 +23,7 @@ async function executeApprovedMediaBuyCascade(
   tenantId: string,
   stepId: string,
   approvedByUser: string,
-): Promise<boolean> {
+): Promise<{ earlyReturn: boolean; error?: string }> {
   const [mapping] = await db
     .select()
     .from(objectWorkflowMappings)
@@ -34,7 +35,7 @@ async function executeApprovedMediaBuyCascade(
     )
     .limit(1);
 
-  if (!mapping) return false;
+  if (!mapping) return { earlyReturn: false };
 
   const mediaBuyId = mapping.objectId;
 
@@ -43,12 +44,14 @@ async function executeApprovedMediaBuyCascade(
       mediaBuyId: mediaBuys.mediaBuyId,
       status: mediaBuys.status,
       startDate: mediaBuys.startDate,
+      principalId: mediaBuys.principalId,
+      rawRequest: mediaBuys.rawRequest,
     })
     .from(mediaBuys)
     .where(and(eq(mediaBuys.mediaBuyId, mediaBuyId), eq(mediaBuys.tenantId, tenantId)))
     .limit(1);
 
-  if (!mediaBuy || mediaBuy.status !== "pending_approval") return false;
+  if (!mediaBuy || mediaBuy.status !== "pending_approval") return { earlyReturn: false };
 
   // Check creative assignments for this media buy
   const assignments = (await db.execute(
@@ -73,7 +76,7 @@ async function executeApprovedMediaBuyCascade(
         .update(mediaBuys)
         .set({ status: "pending_creatives", updatedAt: new Date() })
         .where(eq(mediaBuys.mediaBuyId, mediaBuyId));
-      return true;
+      return { earlyReturn: true };
     }
   }
 
@@ -88,7 +91,20 @@ async function executeApprovedMediaBuyCascade(
     })
     .where(eq(mediaBuys.mediaBuyId, mediaBuyId));
 
-  return false;
+  const execution = await executeApprovedMediaBuyViaAdapter(
+    { tenantId, principalId: mediaBuy.principalId },
+    mediaBuyId,
+    mediaBuy.rawRequest,
+  );
+  if (!execution.success) {
+    await db
+      .update(mediaBuys)
+      .set({ status: "failed", updatedAt: new Date() })
+      .where(eq(mediaBuys.mediaBuyId, mediaBuyId));
+    return { earlyReturn: false, error: execution.error };
+  }
+
+  return { earlyReturn: false };
 }
 
 const stepActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -130,8 +146,13 @@ const stepActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance) =>
         .where(eq(workflowSteps.stepId, stepId));
 
       // Execute adapter creation cascade for linked media buy
-      const earlyReturn = await executeApprovedMediaBuyCascade(id, stepId, userEmail);
-      if (earlyReturn) {
+      const cascade = await executeApprovedMediaBuyCascade(id, stepId, userEmail);
+      if (cascade.error) {
+        return reply.code(500).send({
+          error: `Workflow step approved but adapter execution failed: ${cascade.error}`,
+        });
+      }
+      if (cascade.earlyReturn) {
         return reply.send({ success: true });
       }
 

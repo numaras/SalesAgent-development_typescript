@@ -1,0 +1,2732 @@
+#!/usr/bin/env python3
+"""
+Prebid Sales Agent A2A Server using official a2a-sdk library.
+Supports both standard A2A message format and JSON-RPC 2.0.
+"""
+
+import contextvars
+import logging
+import os
+import sys
+import uuid
+from collections.abc import AsyncGenerator
+from typing import Any, cast
+
+# Fix import order to avoid local a2a directory conflict
+# Import official a2a-sdk first before adding local paths
+
+original_path = sys.path.copy()
+
+# Temporarily remove current directory to avoid local a2a conflict
+if "" in sys.path:
+    sys.path.remove("")
+if "." in sys.path:
+    sys.path.remove(".")
+
+# Official a2a-sdk imports (must be before adding local paths)
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+from a2a.server.context import ServerCallContext
+from a2a.server.events.event_queue import Event
+from a2a.server.request_handlers.request_handler import RequestHandler
+from a2a.types import (
+    AgentCard,
+    AgentExtension,
+    Artifact,
+    DataPart,
+    InternalError,
+    InvalidParamsError,
+    InvalidRequestError,
+    Message,
+    MessageSendParams,
+    MethodNotFoundError,
+    Part,
+    PushNotificationConfig,
+    Task,
+    TaskIdParams,
+    TaskQueryParams,
+    TaskState,
+    TaskStatus,
+    TextPart,
+    UnsupportedOperationError,
+)
+from a2a.utils.errors import ServerError
+
+# Restore paths and add parent directories for local imports
+sys.path = original_path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+# Import core functions for direct calls (raw functions without FastMCP decorators)
+from datetime import UTC, datetime
+
+from adcp import create_a2a_webhook_payload
+from adcp.types import GeneratedTaskStatus
+from adcp.types.generated_poc.core.context import ContextObject
+from adcp.types.generated_poc.core.creative_asset import CreativeAsset
+from sqlalchemy import select
+
+from src.core.audit_logger import get_audit_logger
+from src.core.auth_utils import get_principal_from_token
+from src.core.config_loader import get_current_tenant
+from src.core.database.models import PushNotificationConfig as DBPushNotificationConfig
+from src.core.domain_config import get_a2a_server_url, get_sales_agent_domain
+from src.core.product_conversion import add_v2_compat_to_products, needs_v2_compat
+from src.core.schemas import CreativeStatusEnum
+from src.core.testing_hooks import AdCPTestContext
+from src.core.tool_context import ToolContext
+from src.core.tools import (
+    create_media_buy_raw as core_create_media_buy_tool,
+)
+from src.core.tools import (
+    get_media_buy_delivery_raw as core_get_media_buy_delivery_tool,
+)
+from src.core.tools import (
+    get_media_buys_raw as core_get_media_buys_tool,
+)
+from src.core.tools import (
+    get_products_raw as core_get_products_tool,
+)
+
+# Signals tools removed - should come from dedicated signals agents, not sales agent
+from src.core.tools import (
+    list_authorized_properties_raw as core_list_authorized_properties_tool,
+)
+from src.core.tools import (
+    list_creative_formats_raw as core_list_creative_formats_tool,
+)
+from src.core.tools import (
+    list_creatives_raw as core_list_creatives_tool,
+)
+from src.core.tools import (
+    sync_creatives_raw as core_sync_creatives_tool,
+)
+from src.core.tools import (
+    update_media_buy_raw as core_update_media_buy_tool,
+)
+from src.core.tools import (
+    update_performance_index_raw as core_update_performance_index_tool,
+)
+from src.core.version import get_version
+from src.services.protocol_webhook_service import get_protocol_webhook_service
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+# ADCP Discovery Skills: Skills that don't require authentication
+# Per AdCP spec section 3.2, these endpoints allow optional authentication for public discovery.
+# IMPORTANT: This is the single source of truth for auth-optional skills in A2A.
+# Add new skills here ONLY if they meet AdCP discovery endpoint requirements:
+#   1. Return only public/non-sensitive data
+#   2. Support tenant-level access control (e.g., brand_manifest_policy)
+#   3. Never expose user-specific or transactional data
+#   4. Must be safe to call without authentication
+DISCOVERY_SKILLS = frozenset(
+    {
+        "get_adcp_capabilities",  # Agent capabilities (always public per AdCP spec)
+        "list_creative_formats",  # Creative specifications (always public)
+        "list_authorized_properties",  # Property catalog (always public)
+        "get_products",  # Conditional: depends on tenant brand_manifest_policy setting
+    }
+)
+
+# Context variables for current request (works with async code, unlike threading.local())
+_request_auth_token: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_auth_token", default=None)
+_request_headers: contextvars.ContextVar[dict | None] = contextvars.ContextVar("request_headers", default=None)
+
+
+class MinimalContext:
+    """Minimal context for unauthenticated requests that need tenant detection.
+
+    This lightweight context object is used when authentication is not required
+    but tenant detection via headers is still needed (e.g., discovery endpoints).
+    It provides the same interface as FastMCP Context for header access.
+    """
+
+    def __init__(self, headers: dict[str, Any]):
+        """Initialize minimal context with request headers.
+
+        Args:
+            headers: Request headers for tenant detection
+        """
+        self.headers: dict[str, Any] = headers
+        self.meta: dict[str, Any] = {"headers": headers}
+
+    @classmethod
+    def from_request_context(cls) -> "MinimalContext":
+        """Create minimal context from current request context.
+
+        Returns:
+            MinimalContext with headers from current request
+        """
+        headers = _request_headers.get() or {}
+        return cls(headers)
+
+
+class AdCPRequestHandler(RequestHandler):
+    """Request handler for AdCP A2A operations supporting JSON-RPC 2.0."""
+
+    def __init__(self):
+        """Initialize the AdCP A2A request handler."""
+        self.tasks = {}  # In-memory task storage
+        logger.info("AdCP Request Handler initialized for direct function calls")
+
+    def _get_auth_token(self) -> str | None:
+        """Extract Bearer token from current request context."""
+        return _request_auth_token.get()
+
+    def _create_tool_context_from_a2a(
+        self, auth_token: str | None, tool_name: str, context_id: str | None = None
+    ) -> ToolContext:
+        """Create a ToolContext from A2A authentication information.
+
+        Args:
+            auth_token: Bearer token from Authorization header (optional)
+            tool_name: Name of the tool being called
+            context_id: Optional context ID for conversation tracking
+
+        Returns:
+            ToolContext for calling core functions
+
+        Raises:
+            ValueError: If authentication fails
+        """
+        # Import tenant resolution functions
+        from src.core.config_loader import (
+            get_tenant_by_id,
+            get_tenant_by_subdomain,
+            get_tenant_by_virtual_host,
+            set_current_tenant,
+        )
+
+        # Get request headers for debugging (case-insensitive lookup)
+        headers = _request_headers.get() or {}
+
+        # Helper to get header case-insensitively
+        def get_header(header_name: str) -> str | None:
+            for key, value in headers.items():
+                if key.lower() == header_name.lower():
+                    return value
+            return None
+
+        apx_host = get_header("apx-incoming-host") or "NOT_PRESENT"
+        host = get_header("host")
+        tenant_header = get_header("x-adcp-tenant")
+
+        logger.info("[A2A AUTH] Resolving tenant from headers:")
+        logger.info(f"  Host: {host}")
+        logger.info(f"  Apx-Incoming-Host: {apx_host}")
+        logger.info(f"  x-adcp-tenant: {tenant_header}")
+
+        # CRITICAL: Resolve tenant from headers FIRST (before authentication)
+        # This matches the MCP pattern in main.py::get_principal_from_context()
+        requested_tenant_id = None
+        tenant_context = None
+        detection_method = None
+
+        # 1. Check Host header for subdomain
+        if not requested_tenant_id and host:
+            subdomain = host.split(".")[0] if "." in host else None
+            if subdomain and subdomain not in ["localhost", "adcp-sales-agent", "www", "admin"]:
+                logger.info(f"[A2A AUTH] Looking up tenant by subdomain: {subdomain}")
+                tenant_context = get_tenant_by_subdomain(subdomain)
+                if tenant_context:
+                    requested_tenant_id = tenant_context["tenant_id"]
+                    detection_method = "subdomain"
+                    set_current_tenant(tenant_context)
+                    logger.info(f"[A2A AUTH] ✅ Tenant detected from subdomain: {subdomain} → {requested_tenant_id}")
+                else:
+                    # Try virtual host lookup
+                    logger.info(f"[A2A AUTH] Trying virtual host lookup for: {host}")
+                    tenant_context = get_tenant_by_virtual_host(host)
+                    if tenant_context:
+                        requested_tenant_id = tenant_context["tenant_id"]
+                        detection_method = "host header (virtual host)"
+                        set_current_tenant(tenant_context)
+                        logger.info(f"[A2A AUTH] ✅ Tenant detected from Host header: {host} → {requested_tenant_id}")
+
+        # 2. Check x-adcp-tenant header
+        if not requested_tenant_id and tenant_header:
+            logger.info(f"[A2A AUTH] Looking up tenant from x-adcp-tenant: {tenant_header}")
+            tenant_context = get_tenant_by_subdomain(tenant_header)
+            if tenant_context:
+                requested_tenant_id = tenant_context["tenant_id"]
+                detection_method = "x-adcp-tenant (subdomain)"
+                set_current_tenant(tenant_context)
+                logger.info(
+                    f"[A2A AUTH] ✅ Tenant detected from x-adcp-tenant: {tenant_header} → {requested_tenant_id}"
+                )
+            else:
+                # Fallback: assume it's a tenant_id
+                tenant_context = get_tenant_by_id(tenant_header)
+                if tenant_context:
+                    requested_tenant_id = tenant_context["tenant_id"]
+                    detection_method = "x-adcp-tenant (direct)"
+                    set_current_tenant(tenant_context)
+                    logger.info(f"[A2A AUTH] ✅ Tenant detected from x-adcp-tenant: {requested_tenant_id}")
+
+        # 3. Check Apx-Incoming-Host header (for Approximated.app routing)
+        if not requested_tenant_id and apx_host and apx_host != "NOT_PRESENT":
+            logger.info(f"[A2A AUTH] Looking up tenant by Apx-Incoming-Host: {apx_host}")
+            tenant_context = get_tenant_by_virtual_host(apx_host)
+            if tenant_context:
+                requested_tenant_id = tenant_context["tenant_id"]
+                detection_method = "apx-incoming-host"
+                set_current_tenant(tenant_context)
+                logger.info(f"[A2A AUTH] ✅ Tenant detected from Apx-Incoming-Host: {apx_host} → {requested_tenant_id}")
+
+        if requested_tenant_id:
+            logger.info(f"[A2A AUTH] Final tenant_id: {requested_tenant_id} (via {detection_method})")
+        else:
+            logger.warning("[A2A AUTH] ⚠️  No tenant detected from headers - will use global token lookup")
+
+        # NOW authenticate with tenant context (if we have one)
+        if not auth_token:
+            raise ServerError(InvalidRequestError(message="Missing authentication token"))
+        principal_id = get_principal_from_token(auth_token, requested_tenant_id)
+        if not principal_id:
+            raise ServerError(
+                InvalidRequestError(
+                    message=f"Invalid authentication token (not found in database). "
+                    f"Token: {auth_token[:20]}..., "
+                    f"Tenant: {requested_tenant_id or 'any'}, "
+                    f"Apx-Incoming-Host: {apx_host}"
+                )
+            )
+
+        # Get tenant info (either from header detection or from token lookup)
+        if not tenant_context:
+            tenant_context = get_current_tenant()
+        if not tenant_context:
+            raise ServerError(
+                InvalidRequestError(
+                    message=f"Unable to determine tenant from authentication. "
+                    f"Principal: {principal_id}, "
+                    f"Apx-Incoming-Host: {apx_host}"
+                )
+            )
+
+        # Generate context ID if not provided
+        if not context_id:
+            context_id = f"a2a_{datetime.now(UTC).timestamp()}"
+
+        logger.info(
+            f"[A2A AUTH] ✅ Authentication successful: tenant={tenant_context['tenant_id']}, principal={principal_id}"
+        )
+
+        # Create ToolContext
+        return ToolContext(
+            context_id=context_id,
+            tenant_id=tenant_context["tenant_id"],
+            principal_id=principal_id,
+            tool_name=tool_name,
+            request_timestamp=datetime.now(UTC),
+            metadata={"source": "a2a_server", "protocol": "a2a_jsonrpc"},
+            testing_context=AdCPTestContext(),  # Default testing context for A2A requests
+        )
+
+    def _tool_context_to_mcp_context(self, tool_context: ToolContext) -> ToolContext:
+        """Convert ToolContext to a context object for raw function calls.
+
+        Raw functions now accept ToolContext directly (no conversion needed).
+        The tools handle both ToolContext and legacy FastMCP Context.
+        """
+        # Return ToolContext directly - tools handle ToolContext natively
+        return tool_context
+
+    def _log_a2a_operation(
+        self,
+        operation: str,
+        tenant_id: str,
+        principal_id: str,
+        success: bool = True,
+        details: dict = None,
+        error: str = None,
+    ):
+        """Log A2A operations to audit system for visibility in activity feed."""
+        try:
+            if not tenant_id:
+                return
+
+            audit_logger = get_audit_logger("A2A", tenant_id)
+            audit_logger.log_operation(
+                operation=operation,
+                principal_name=f"A2A_Client_{principal_id}",
+                principal_id=principal_id,
+                adapter_id="a2a_client",
+                success=success,
+                details=details,
+                error=error,
+                tenant_id=tenant_id,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log A2A operation: {e}")
+
+    async def _send_protocol_webhook(
+        self,
+        task: Task,
+        status: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ):
+        """Send protocol-level push notification if configured.
+
+        Per AdCP A2A spec (https://docs.adcontextprotocol.org/docs/protocols/a2a-guide#push-notifications-a2a-specific):
+        - Final states (completed, failed, canceled): Send full Task object with artifacts
+        - Intermediate states (working, input-required, submitted): Send TaskStatusUpdateEvent
+
+        Uses create_a2a_webhook_payload from adcp library to automatically select correct type.
+        """
+        try:
+            # Check if task has push notification config in metadata
+            if not task.metadata or "push_notification_config" not in task.metadata:
+                return
+
+            webhook_config: PushNotificationConfig = task.metadata["push_notification_config"]
+            push_notification_service = get_protocol_webhook_service()
+
+            from uuid import uuid4
+
+            url = webhook_config.url
+            if not url:
+                logger.info("[red]No push notification URL present; skipping webhook[/red]")
+                return
+
+            auth = webhook_config.authentication
+            schemes = auth.schemes if auth else []
+            auth_type = schemes[0] if isinstance(schemes, list) and schemes else None
+            auth_token = auth.credentials if auth else None
+
+            push_notification_config = DBPushNotificationConfig(
+                id=webhook_config.id or f"pnc_{uuid4().hex[:16]}",
+                tenant_id="",
+                principal_id="",
+                url=url,
+                authentication_type=auth_type,
+                authentication_token=auth_token,
+                is_active=True,
+            )
+
+            # Convert status string to GeneratedTaskStatus enum
+            try:
+                status_enum = GeneratedTaskStatus(status)
+            except ValueError:
+                # Fallback for unknown status values
+                logger.warning(f"Unknown status '{status}', defaulting to 'working'")
+                status_enum = GeneratedTaskStatus.working
+
+            # Build result data for the webhook payload
+            # Include error information in result if status is failed
+            result_data: dict[str, Any] = result or {}
+            if error and status == "failed":
+                result_data["error"] = error
+
+            # Use create_a2a_webhook_payload to get the correct payload type:
+            # - Task for final states (completed, failed, canceled)
+            # - TaskStatusUpdateEvent for intermediate states (working, input-required, submitted)
+            payload = create_a2a_webhook_payload(
+                task_id=task.id,
+                status=status_enum,
+                context_id=task.context_id or "",
+                result=result_data,
+            )
+
+            metadata = {
+                "task_type": (
+                    task.metadata["skills_requested"][0] if len(task.metadata["skills_requested"]) > 0 else "unknown"
+                ),
+            }
+
+            await push_notification_service.send_notification(
+                push_notification_config=push_notification_config, payload=payload, metadata=metadata
+            )
+        except Exception as e:
+            # Don't fail the task if webhook fails
+            logger.warning(f"Failed to send protocol-level webhook for task {task.id}: {e}")
+
+    def _reconstruct_response_object(self, skill_name: str, data: dict) -> Any:
+        """Reconstruct a response object from skill result data to call __str__().
+
+        Args:
+            skill_name: Name of the skill that produced the result
+            data: Dictionary containing the response data
+
+        Returns:
+            Reconstructed response object, or None if reconstruction fails
+        """
+        try:
+            # Import response classes - for union types, import the concrete variants
+            from src.core.schemas import (
+                CreateMediaBuyError,
+                CreateMediaBuySuccess,
+                GetMediaBuyDeliveryResponse,
+                GetMediaBuysResponse,
+                GetProductsResponse,
+                ListAuthorizedPropertiesResponse,
+                ListCreativeFormatsResponse,
+                ListCreativesResponse,
+                SyncCreativesResponse,
+                UpdateMediaBuyError,
+                UpdateMediaBuySuccess,
+            )
+
+            # For union types (CreateMediaBuyResponse, UpdateMediaBuyResponse),
+            # determine which concrete class based on data content
+            if skill_name == "create_media_buy":
+                # Success responses have media_buy_id, error responses have errors
+                if "media_buy_id" in data:
+                    return CreateMediaBuySuccess(**data)
+                else:
+                    return CreateMediaBuyError(**data)
+            elif skill_name == "update_media_buy":
+                # Success responses have media_buy_id, error responses have errors
+                if "media_buy_id" in data:
+                    return UpdateMediaBuySuccess(**data)
+                else:
+                    return UpdateMediaBuyError(**data)
+
+            # Non-union response types - use the concrete class directly
+            response_map: dict[str, type] = {
+                "get_media_buy_delivery": GetMediaBuyDeliveryResponse,
+                "get_media_buys": GetMediaBuysResponse,
+                "get_products": GetProductsResponse,
+                "list_authorized_properties": ListAuthorizedPropertiesResponse,
+                "list_creative_formats": ListCreativeFormatsResponse,
+                "list_creatives": ListCreativesResponse,
+                "sync_creatives": SyncCreativesResponse,
+            }
+
+            response_class = response_map.get(skill_name)
+            if response_class:
+                return response_class(**data)
+        except Exception as e:
+            logger.debug(f"Could not reconstruct response object for {skill_name}: {e}")
+        return None
+
+    async def on_message_send(
+        self,
+        params: MessageSendParams,
+        context: ServerCallContext | None = None,
+    ) -> Task | Message:
+        """Handle 'message/send' method for non-streaming requests.
+
+        Supports both invocation patterns from AdCP PR #48:
+        1. Natural Language: parts[{kind: "text", text: "..."}]
+        2. Explicit Skill: parts[{kind: "data", data: {skill: "...", parameters: {...}}}]
+
+        Args:
+            params: Parameters including the message and configuration
+            context: Server call context
+
+        Returns:
+            Task object or Message response
+        """
+        logger.info(f"Handling message/send request: {params}")
+
+        # Parse message for both text and structured data parts
+        message = params.message
+        text_parts = []
+        skill_invocations = []
+
+        if hasattr(message, "parts") and message.parts:
+            for part in message.parts:
+                # Handle text parts (natural language invocation)
+                if hasattr(part, "text"):
+                    text_parts.append(part.text)
+                elif hasattr(part, "root") and hasattr(part.root, "text"):
+                    text_parts.append(part.root.text)
+
+                # Handle structured data parts (explicit skill invocation)
+                elif hasattr(part, "data") and isinstance(part.data, dict):
+                    # Support both "input" (A2A spec) and "parameters" (legacy) for skill params
+                    if "skill" in part.data:
+                        params_data = part.data.get("input") or part.data.get("parameters", {})
+                        skill_invocations.append({"skill": part.data["skill"], "parameters": params_data})
+                        logger.info(
+                            f"Found explicit skill invocation: {part.data['skill']} with params: {list(params_data.keys())}"
+                        )
+
+                # Handle nested data structure (some A2A clients use this format)
+                elif hasattr(part, "root") and hasattr(part.root, "data"):
+                    data = part.root.data
+                    if isinstance(data, dict) and "skill" in data:
+                        # Support both "input" (A2A spec) and "parameters" (legacy) for skill params
+                        params_data = data.get("input") or data.get("parameters", {})
+                        skill_invocations.append({"skill": data["skill"], "parameters": params_data})
+                        logger.info(
+                            f"Found explicit skill invocation (nested): {data['skill']} with params: {list(params_data.keys())}"
+                        )
+
+        # Combine text for natural language fallback
+        combined_text = " ".join(text_parts).strip().lower()
+
+        # Create task for tracking
+        task_id = f"task_{len(self.tasks) + 1}"
+        # Handle message_id being a number or string
+        msg_id = str(params.message.message_id) if hasattr(params.message, "message_id") else None
+        context_id = params.message.context_id or msg_id or f"ctx_{task_id}"
+
+        # Extract push notification config from protocol layer (A2A MessageSendConfiguration)
+        push_notification_config = None
+        if hasattr(params, "configuration") and params.configuration:
+            if hasattr(params.configuration, "push_notification_config"):
+                push_notification_config = params.configuration.push_notification_config
+                if push_notification_config:
+                    logger.info(
+                        f"Protocol-level push notification config provided for task {task_id}: {push_notification_config.url}"
+                    )
+
+        # Prepare task metadata with both invocation types
+        task_metadata: dict[str, Any] = {
+            "request_text": combined_text,
+            "invocation_type": "explicit_skill" if skill_invocations else "natural_language",
+        }
+        if skill_invocations:
+            task_metadata["skills_requested"] = [inv["skill"] for inv in skill_invocations]
+
+        # Store push notification config model directly in metadata (no destructuring)
+        if push_notification_config:
+            task_metadata["push_notification_config"] = push_notification_config
+
+        task = Task(
+            id=task_id,
+            context_id=context_id,
+            kind="task",
+            status=TaskStatus(state=TaskState.working),
+            metadata=task_metadata,
+        )
+        self.tasks[task_id] = task
+
+        try:
+            # Get authentication token
+            auth_token = self._get_auth_token()
+
+            # Check if any requested skills require authentication
+            # Default to not requiring auth - only require if we have non-discovery skills
+            requires_auth = False
+            if skill_invocations:
+                # If ANY skill requires auth (not in discovery set), then require auth
+                requested_skills = {inv["skill"] for inv in skill_invocations}
+                non_discovery_skills = requested_skills - DISCOVERY_SKILLS
+                if non_discovery_skills:
+                    requires_auth = True
+
+            # Require authentication for non-public skills
+            if requires_auth and not auth_token:
+                raise ServerError(
+                    InvalidRequestError(
+                        message="Missing authentication token - Bearer token required in Authorization header"
+                    )
+                )
+
+            # Route: Handle explicit skill invocations first, then natural language fallback
+            if skill_invocations:
+                # Process explicit skill invocations
+                results = []
+                for invocation in skill_invocations:
+                    skill_name = invocation["skill"]
+                    parameters = invocation["parameters"]
+                    logger.info(f"Processing explicit skill: {skill_name} with parameters: {parameters}")
+
+                    try:
+                        result = await self._handle_explicit_skill(
+                            skill_name,
+                            parameters,
+                            auth_token,
+                            push_notification_config=task_metadata.get("push_notification_config"),
+                        )
+                        results.append({"skill": skill_name, "result": result, "success": True})
+                    except ServerError:
+                        # ServerError should bubble up immediately (JSON-RPC error)
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error in explicit skill {skill_name}: {e}")
+                        results.append({"skill": skill_name, "error": str(e), "success": False})
+
+                # Check for submitted status (manual approval required) - return early without artifacts
+                # Per AdCP spec, async operations should return Task with status=submitted and no artifacts
+                for res in results:
+                    if res["success"] and isinstance(res["result"], dict):
+                        result_status = res["result"].get("status")
+                        if result_status == "submitted":
+                            task.status = TaskStatus(state=TaskState.submitted)
+                            task.artifacts = None  # No artifacts for pending tasks
+                            logger.info(
+                                f"Task {task_id} requires manual approval, returning status=submitted with no artifacts"
+                            )
+                            # Send protocol-level webhook notification
+                            await self._send_protocol_webhook(task, status="submitted")
+                            self.tasks[task_id] = task
+                            return task
+
+                # Create artifacts for all skill results with human-readable text
+                for i, res in enumerate(results):
+                    artifact_data = res["result"] if res["success"] else {"error": res["error"]}
+
+                    # Generate human-readable text from response __str__()
+                    # Per A2A spec, use TextPart + DataPart pattern (not description field)
+                    text_message = None
+                    if res["success"] and isinstance(artifact_data, dict):
+                        try:
+                            response_obj = self._reconstruct_response_object(res["skill"], artifact_data)
+                            if response_obj and hasattr(response_obj, "__str__"):
+                                text_message = str(response_obj)
+                        except Exception:
+                            pass  # If reconstruction fails, skip text part
+
+                    # Build parts list per A2A spec: optional TextPart + required DataPart
+                    parts = []
+                    if text_message:
+                        parts.append(Part(root=TextPart(text=text_message)))
+                    parts.append(Part(root=DataPart(data=artifact_data)))
+
+                    task.artifacts = task.artifacts or []
+                    task.artifacts.append(
+                        Artifact(
+                            artifact_id=f"skill_result_{i + 1}",
+                            name=f"{'error' if not res['success'] else res['skill']}_result",
+                            parts=parts,
+                        )
+                    )
+
+                # Check if any skills failed and determine task status
+                failed_skills = [res["skill"] for res in results if not res["success"]]
+                successful_skills = [res["skill"] for res in results if res["success"]]
+
+                if failed_skills and not successful_skills:
+                    # All skills failed - mark task as failed
+                    task.status = TaskStatus(state=TaskState.failed)
+
+                    # Send protocol-level webhook notification for failure
+                    error_messages = [res.get("error", "Unknown error") for res in results if not res["success"]]
+                    await self._send_protocol_webhook(task, status="failed", error="; ".join(error_messages))
+
+                    return task
+                elif successful_skills:
+                    # Log successful skill invocations with rich context
+                    try:
+                        tool_context = self._create_tool_context_from_a2a(auth_token, successful_skills[0])
+
+                        # Extract meaningful details from results
+                        log_details = {"skills": successful_skills, "count": len(successful_skills)}
+
+                        # Add context from the first successful skill
+                        first_result = next((r for r in results if r["success"]), None)
+                        if first_result and "result" in first_result:
+                            result_data = first_result["result"]
+
+                            # Extract budget and package info for create_media_buy
+                            if "create_media_buy" in first_result["skill"]:
+                                if isinstance(result_data, dict):
+                                    if "total_budget" in result_data:
+                                        log_details["total_budget"] = result_data["total_budget"]
+                                    if "packages" in result_data:
+                                        log_details["package_count"] = len(result_data["packages"])
+                                    if "media_buy_id" in result_data:
+                                        log_details["media_buy_id"] = result_data["media_buy_id"]
+
+                            # Extract product count for get_products
+                            elif "get_products" in first_result["skill"]:
+                                if isinstance(result_data, dict) and "products" in result_data:
+                                    log_details["product_count"] = len(result_data["products"])
+
+                            # Extract creative count for sync_creatives
+                            elif "sync_creatives" in first_result["skill"]:
+                                if isinstance(result_data, dict) and "creatives" in result_data:
+                                    log_details["creative_count"] = len(result_data["creatives"])
+
+                        self._log_a2a_operation(
+                            "explicit_skill_invocation",
+                            tool_context.tenant_id,
+                            tool_context.principal_id,
+                            True,
+                            log_details,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not log skill invocations: {e}")
+
+            # Natural language fallback (existing keyword-based routing)
+            elif any(word in combined_text for word in ["product", "inventory", "available", "catalog"]):
+                result = await self._get_products(combined_text, auth_token)
+                # Extract tenant and principal for logging
+                try:
+                    tool_context = self._create_tool_context_from_a2a(auth_token, "get_products")
+                    tenant_id = tool_context.tenant_id
+                    principal_id = tool_context.principal_id
+                except Exception as e:
+                    logger.warning(f"Could not extract context for logging: {e}")
+                    tenant_id = "unknown"
+                    principal_id = "unknown"
+
+                self._log_a2a_operation(
+                    "get_products",
+                    tenant_id,
+                    principal_id,
+                    True,
+                    {
+                        "query": combined_text[:100],
+                        "product_count": len(result.get("products", [])) if isinstance(result, dict) else 0,
+                    },
+                )
+                task.artifacts = [
+                    Artifact(
+                        artifact_id="product_catalog_1",
+                        name="product_catalog",
+                        parts=[Part(root=DataPart(data=result))],
+                    )
+                ]
+            elif any(word in combined_text for word in ["price", "pricing", "cost", "cpm", "budget"]):
+                # Redirect pricing queries to get_products which has real price_guidance
+                result = await self._handle_get_products_skill(
+                    {"brief": combined_text},
+                    auth_token,
+                )
+                # Extract tenant and principal for logging
+                try:
+                    tool_context = self._create_tool_context_from_a2a(auth_token, "get_products")
+                    tenant_id = tool_context.tenant_id
+                    principal_id = tool_context.principal_id
+                except Exception as e:
+                    logger.warning(f"Could not extract context for logging: {e}")
+                    tenant_id = "unknown"
+                    principal_id = "unknown"
+
+                self._log_a2a_operation(
+                    "get_products",
+                    tenant_id,
+                    principal_id,
+                    True,
+                    {
+                        "query": combined_text[:100],
+                        "query_type": "pricing",
+                        "products_count": len(result.get("products", [])) if isinstance(result, dict) else 0,
+                    },
+                )
+                task.artifacts = [
+                    Artifact(
+                        artifact_id="pricing_info_1",
+                        name="pricing_information",
+                        parts=[Part(root=DataPart(data=result))],
+                    )
+                ]
+            elif any(word in combined_text for word in ["target", "audience"]):
+                # Redirect targeting queries to get_adcp_capabilities which has real targeting info
+                result = await self._handle_get_adcp_capabilities_skill({}, auth_token)
+                # Extract tenant and principal for logging
+                try:
+                    tool_context = self._create_tool_context_from_a2a(auth_token, "get_adcp_capabilities")
+                    tenant_id = tool_context.tenant_id
+                    principal_id = tool_context.principal_id
+                except Exception as e:
+                    logger.warning(f"Could not extract context for logging: {e}")
+                    tenant_id = "unknown"
+                    principal_id = "unknown"
+
+                self._log_a2a_operation(
+                    "get_adcp_capabilities",
+                    tenant_id,
+                    principal_id,
+                    True,
+                    {
+                        "query": combined_text[:100],
+                        "query_type": "targeting",
+                    },
+                )
+                task.artifacts = [
+                    Artifact(
+                        artifact_id="targeting_opts_1",
+                        name="targeting_options",
+                        parts=[Part(root=DataPart(data=result))],
+                    )
+                ]
+            elif any(word in combined_text for word in ["create", "buy", "campaign", "media"]):
+                result = await self._create_media_buy(combined_text, auth_token)
+                # Extract tenant and principal for logging
+                try:
+                    tool_context = self._create_tool_context_from_a2a(auth_token, "create_media_buy")
+                    tenant_id = tool_context.tenant_id
+                    principal_id = tool_context.principal_id
+                except Exception as e:
+                    logger.warning(f"Could not extract context for logging: {e}")
+                    tenant_id = "unknown"
+                    principal_id = "unknown"
+
+                self._log_a2a_operation(
+                    "create_media_buy",
+                    tenant_id,
+                    principal_id,
+                    result.get("success", False),
+                    {"query": combined_text[:100], "success": result.get("success", False)},
+                    result.get("message") if not result.get("success") else None,
+                )
+                if result.get("success"):
+                    task.artifacts = [
+                        Artifact(
+                            artifact_id="media_buy_1",
+                            name="media_buy_created",
+                            parts=[Part(root=DataPart(data=result))],
+                        )
+                    ]
+                else:
+                    task.artifacts = [
+                        Artifact(
+                            artifact_id="media_buy_error_1",
+                            name="media_buy_error",
+                            parts=[Part(root=DataPart(data=result))],
+                        )
+                    ]
+            else:
+                # General help response
+                capabilities = {
+                    "supported_queries": [
+                        "product_catalog",
+                        "targeting_options",
+                        "pricing_information",
+                        "campaign_creation",
+                    ],
+                    "example_queries": [
+                        "What video ad products do you have available?",
+                        "Show me targeting options",
+                        "What are your pricing models?",
+                        "How do I create a media buy?",
+                    ],
+                }
+                # Extract tenant and principal for logging
+                try:
+                    tool_context = self._create_tool_context_from_a2a(auth_token, "get_capabilities")
+                    tenant_id = tool_context.tenant_id
+                    principal_id = tool_context.principal_id
+                except Exception as e:
+                    logger.warning(f"Could not extract context for logging: {e}")
+                    tenant_id = "unknown"
+                    principal_id = "unknown"
+
+                self._log_a2a_operation(
+                    "get_capabilities",
+                    tenant_id,
+                    principal_id,
+                    True,
+                    {"query": combined_text[:100], "response_type": "capabilities"},
+                )
+                task.artifacts = [
+                    Artifact(
+                        artifact_id="capabilities_1",
+                        name="capabilities",
+                        parts=[Part(root=DataPart(data=capabilities))],
+                    )
+                ]
+
+            # Determine task status based on operation result
+            # For sync_creatives, check if any creatives are pending review
+            task_state = TaskState.completed
+            task_status_str = "completed"
+
+            result_data = {}
+            if task.artifacts:
+                # Extract result from artifacts
+                for artifact in task.artifacts:
+                    if hasattr(artifact, "parts") and artifact.parts:
+                        for part in artifact.parts:
+                            if hasattr(part, "data") and part.data:
+                                result_data[artifact.name] = part.data
+
+                                # Check if this is a sync_creatives response with pending creatives
+                                if artifact.name == "result" and isinstance(part.data, dict):
+                                    creatives = part.data.get("creatives", [])
+                                    if any(
+                                        c.get("status") == CreativeStatusEnum.pending_review.value
+                                        for c in creatives
+                                        if isinstance(c, dict)
+                                    ):
+                                        task_state = TaskState.submitted
+                                        task_status_str = "submitted"
+
+                                    # Check for explicit status field (e.g., create_media_buy returns this)
+                                    result_status = part.data.get("status")
+                                    if result_status == "submitted":
+                                        task_state = TaskState.submitted
+                                        task_status_str = "submitted"
+
+            # Mark task with appropriate status
+            task.status = TaskStatus(state=task_state)
+
+            # Send protocol-level webhook notification if configured
+            await self._send_protocol_webhook(task, status=task_status_str)
+
+        except ServerError:
+            # Re-raise ServerError as-is (will be caught by JSON-RPC handler)
+            raise
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            # Try to get context for error logging
+            try:
+                auth_token = self._get_auth_token()
+                if auth_token:
+                    tool_context = self._create_tool_context_from_a2a(auth_token, "error_handler")
+                    tenant_id = tool_context.tenant_id
+                    principal_id = tool_context.principal_id
+                else:
+                    tenant_id = "unknown"
+                    principal_id = "unknown"
+            except:
+                tenant_id = "unknown"
+                principal_id = "unknown"
+
+            self._log_a2a_operation(
+                "message_processing",
+                tenant_id,
+                principal_id,
+                False,
+                {"error_type": type(e).__name__},
+                str(e),
+            )
+
+            # Send protocol-level webhook notification for failure if configured
+            task.status = TaskStatus(state=TaskState.failed)
+            # Attach error to task artifacts
+            task.artifacts = [
+                Artifact(
+                    artifact_id="error_1",
+                    name="processing_error",
+                    parts=[Part(root=DataPart(data={"error": str(e), "error_type": type(e).__name__}))],
+                )
+            ]
+
+            await self._send_protocol_webhook(task, status="failed")
+
+            # Raise ServerError instead of creating failed task
+            raise ServerError(InternalError(message=f"Message processing failed: {str(e)}"))
+
+        self.tasks[task_id] = task
+        return task
+
+    async def on_message_send_stream(
+        self,
+        params: MessageSendParams,
+        context: ServerCallContext | None = None,
+    ) -> AsyncGenerator[Event]:
+        """Handle 'message/stream' method for streaming requests.
+
+        Args:
+            params: Parameters including the message and configuration
+            context: Server call context
+
+        Yields:
+            Event objects from the agent's execution
+        """
+        # For now, implement non-streaming behavior
+        # In production, this would yield events as they occur
+        result = await self.on_message_send(params, context)
+
+        # Yield a single event with the complete task
+        # result can be Task, Message, or other A2A types - all have model_dump()
+        # mypy doesn't understand that union members all have model_dump()
+        yield Event(type="task_update", data=result.model_dump(mode="json"))  # type: ignore[operator]
+
+    async def on_get_task(
+        self,
+        params: TaskQueryParams,
+        context: ServerCallContext | None = None,
+    ) -> Task | None:
+        """Handle 'tasks/get' method to retrieve task status.
+
+        Args:
+            params: Parameters specifying the task ID
+            context: Server call context
+
+        Returns:
+            Task object if found, otherwise None
+        """
+        task_id = params.id
+        return self.tasks.get(task_id)
+
+    async def on_cancel_task(
+        self,
+        params: TaskIdParams,
+        context: ServerCallContext | None = None,
+    ) -> Task | None:
+        """Handle 'tasks/cancel' method to cancel a task.
+
+        Args:
+            params: Parameters specifying the task ID
+            context: Server call context
+
+        Returns:
+            Task object with canceled status, or None if not found
+        """
+        task_id = params.id
+        task = self.tasks.get(task_id)
+        if task:
+            task.status = TaskStatus(state=TaskState.canceled)
+            self.tasks[task_id] = task
+        return task
+
+    async def on_resubscribe_to_task(
+        self,
+        params: Any,
+        context: ServerCallContext | None = None,
+    ) -> AsyncGenerator[Event, None]:
+        """Handle task resubscription requests."""
+        # Not implemented for now
+        from a2a.types import UnsupportedOperationError
+        from a2a.utils.errors import ServerError
+
+        raise ServerError(UnsupportedOperationError(message="Task resubscription not supported"))
+        yield  # Make this a generator (unreachable but satisfies type checker)
+
+    async def on_get_task_push_notification_config(
+        self,
+        params: Any,
+        context: ServerCallContext | None = None,
+    ) -> Any:
+        """Handle get push notification config requests.
+
+        Retrieves the push notification configuration for a specific config ID.
+        """
+        from a2a.types import InvalidParamsError, TaskNotFoundError
+
+        from src.core.database.database_session import get_db_session
+
+        try:
+            # Get authentication token
+            auth_token = self._get_auth_token()
+            if not auth_token:
+                raise ServerError(InvalidRequestError(message="Missing authentication token"))
+
+            # Resolve tenant and principal from auth token
+            tool_context = self._create_tool_context_from_a2a(auth_token, "get_push_notification_config")
+
+            # Extract config_id from params
+            config_id = params.get("id") if isinstance(params, dict) else getattr(params, "id", None)
+            if not config_id:
+                raise ServerError(InvalidParamsError(message="Missing required parameter: id"))
+
+            # Query database for config
+            with get_db_session() as db:
+                stmt = select(DBPushNotificationConfig).filter_by(
+                    id=config_id,
+                    tenant_id=tool_context.tenant_id,
+                    principal_id=tool_context.principal_id,
+                    is_active=True,
+                )
+                config = db.scalars(stmt).first()
+
+                if not config:
+                    raise ServerError(TaskNotFoundError(message=f"Push notification config not found: {config_id}"))
+
+                # Return A2A PushNotificationConfig format
+                return {
+                    "id": config.id,
+                    "url": config.url,
+                    "authentication": (
+                        {"type": config.authentication_type or "none", "token": config.authentication_token}
+                        if config.authentication_type
+                        else None
+                    ),
+                    "token": config.validation_token,
+                }
+
+        except ServerError:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting push notification config: {e}")
+            raise ServerError(InternalError(message=f"Failed to get push notification config: {str(e)}"))
+
+    async def on_set_task_push_notification_config(
+        self,
+        params: Any,
+        context: ServerCallContext | None = None,
+    ) -> Any:
+        """Handle set push notification config requests.
+
+        Creates or updates a push notification configuration for async operation callbacks.
+        Buyers use this to register webhook URLs where they want to receive status updates.
+        """
+        import uuid
+        from datetime import UTC, datetime
+
+        from a2a.types import InvalidParamsError
+
+        from src.core.database.database_session import get_db_session
+        from src.core.database.models import PushNotificationConfig as DBPushNotificationConfig
+
+        try:
+            # Get authentication token
+            auth_token = self._get_auth_token()
+            if not auth_token:
+                raise ServerError(InvalidRequestError(message="Missing authentication token"))
+
+            # Resolve tenant and principal from auth token
+            tool_context = self._create_tool_context_from_a2a(auth_token, "set_push_notification_config")
+
+            # Extract parameters (A2A spec format)
+            # Params structure: {task_id, push_notification_config: {url, authentication}}
+            # Note: params comes as Pydantic object with snake_case attributes
+            logger.info(f"[DEBUG] Received params type: {type(params)}, value: {params}")
+
+            task_id = getattr(params, "task_id", None)
+            push_config = getattr(params, "push_notification_config", None)
+
+            logger.info(f"[DEBUG] task_id: {task_id}, push_config: {push_config}, type: {type(push_config)}")
+
+            # Extract URL and authentication from push_config object
+            url = getattr(push_config, "url", None) if push_config else None
+            authentication = getattr(push_config, "authentication", None) if push_config else None
+            config_id = getattr(push_config, "id", None) if push_config else None
+            config_id = config_id or f"pnc_{uuid.uuid4().hex[:16]}"
+            validation_token = getattr(push_config, "token", None) if push_config else None
+            session_id = None  # Not in A2A spec
+
+            if not url:
+                raise ServerError(InvalidParamsError(message="Missing required parameter: url"))
+
+            # Extract authentication details (A2A spec format: schemes, credentials)
+            auth_type = None
+            auth_token_value = None
+            if authentication:
+                if isinstance(authentication, dict):
+                    # A2A spec uses "schemes" (array) and "credentials" (string)
+                    schemes = authentication.get("schemes", [])
+                    auth_type = schemes[0] if schemes else None
+                    auth_token_value = authentication.get("credentials")
+                else:
+                    schemes = getattr(authentication, "schemes", [])
+                    auth_type = schemes[0] if schemes else None
+                    auth_token_value = getattr(authentication, "credentials", None)
+
+            # Create or update configuration
+            with get_db_session() as db:
+                # Check if config exists
+                stmt = select(DBPushNotificationConfig).filter_by(
+                    id=config_id, tenant_id=tool_context.tenant_id, principal_id=tool_context.principal_id
+                )
+                existing_config = db.scalars(stmt).first()
+
+                if existing_config:
+                    # Update existing config
+                    existing_config.url = url
+                    existing_config.authentication_type = auth_type
+                    existing_config.authentication_token = auth_token_value
+                    existing_config.validation_token = validation_token
+                    existing_config.session_id = session_id
+                    existing_config.updated_at = datetime.now(UTC)
+                    existing_config.is_active = True
+                else:
+                    # Create new config
+                    new_config = DBPushNotificationConfig(
+                        id=config_id,
+                        tenant_id=tool_context.tenant_id,
+                        principal_id=tool_context.principal_id,
+                        session_id=session_id,
+                        url=url,
+                        authentication_type=auth_type,
+                        authentication_token=auth_token_value,
+                        validation_token=validation_token,
+                        is_active=True,
+                    )
+                    db.add(new_config)
+
+                db.commit()
+
+                logger.info(
+                    f"Push notification config {'updated' if existing_config else 'created'}: {config_id} for tenant {tool_context.tenant_id}"
+                )
+
+                # Return A2A response (TaskPushNotificationConfig format)
+                from a2a.types import (
+                    PushNotificationAuthenticationInfo,
+                    PushNotificationConfig,
+                    TaskPushNotificationConfig,
+                )
+
+                # Build authentication info if present
+                auth_info = None
+                if auth_type and auth_token_value:
+                    auth_info = PushNotificationAuthenticationInfo(schemes=[auth_type], credentials=auth_token_value)
+
+                # Build push notification config
+                pnc = PushNotificationConfig(url=url, authentication=auth_info, id=config_id, token=validation_token)
+
+                # Return TaskPushNotificationConfig
+                return TaskPushNotificationConfig(task_id=task_id or "*", push_notification_config=pnc)
+
+        except ServerError:
+            raise
+        except Exception as e:
+            logger.error(f"Error setting push notification config: {e}")
+            raise ServerError(InternalError(message=f"Failed to set push notification config: {str(e)}"))
+
+    async def on_list_task_push_notification_config(
+        self,
+        params: Any,
+        context: ServerCallContext | None = None,
+    ) -> Any:
+        """Handle list push notification config requests.
+
+        Returns all active push notification configurations for the authenticated principal.
+        """
+        from src.core.database.database_session import get_db_session
+        from src.core.database.models import PushNotificationConfig as DBPushNotificationConfig
+
+        try:
+            # Get authentication token
+            auth_token = self._get_auth_token()
+            if not auth_token:
+                raise ServerError(InvalidRequestError(message="Missing authentication token"))
+
+            # Resolve tenant and principal from auth token
+            tool_context = self._create_tool_context_from_a2a(auth_token, "list_push_notification_configs")
+
+            # Query database for all active configs
+            with get_db_session() as db:
+                stmt = select(DBPushNotificationConfig).filter_by(
+                    tenant_id=tool_context.tenant_id, principal_id=tool_context.principal_id, is_active=True
+                )
+                configs = db.scalars(stmt).all()
+
+                # Convert to A2A format
+                configs_list = []
+                for config in configs:
+                    configs_list.append(
+                        {
+                            "id": config.id,
+                            "url": config.url,
+                            "authentication": (
+                                {"type": config.authentication_type or "none", "token": config.authentication_token}
+                                if config.authentication_type
+                                else None
+                            ),
+                            "token": config.validation_token,
+                            "created_at": config.created_at.isoformat() if config.created_at else None,
+                        }
+                    )
+
+                logger.info(f"Listed {len(configs_list)} push notification configs for tenant {tool_context.tenant_id}")
+
+                return {"configs": configs_list, "total_count": len(configs_list)}
+
+        except ServerError:
+            raise
+        except Exception as e:
+            logger.error(f"Error listing push notification configs: {e}")
+            raise ServerError(InternalError(message=f"Failed to list push notification configs: {str(e)}"))
+
+    async def on_delete_task_push_notification_config(
+        self,
+        params: Any,
+        context: ServerCallContext | None = None,
+    ) -> Any:
+        """Handle delete push notification config requests.
+
+        Marks a push notification configuration as inactive (soft delete).
+        """
+        from datetime import UTC, datetime
+
+        from a2a.types import InvalidParamsError, TaskNotFoundError
+
+        from src.core.database.database_session import get_db_session
+        from src.core.database.models import PushNotificationConfig as DBPushNotificationConfig
+
+        try:
+            # Get authentication token
+            auth_token = self._get_auth_token()
+            if not auth_token:
+                raise ServerError(InvalidRequestError(message="Missing authentication token"))
+
+            # Resolve tenant and principal from auth token
+            tool_context = self._create_tool_context_from_a2a(auth_token, "delete_push_notification_config")
+
+            # Extract config_id from params
+            config_id = params.get("id") if isinstance(params, dict) else getattr(params, "id", None)
+            if not config_id:
+                raise ServerError(InvalidParamsError(message="Missing required parameter: id"))
+
+            # Query database and mark as inactive
+            with get_db_session() as db:
+                stmt = select(DBPushNotificationConfig).filter_by(
+                    id=config_id, tenant_id=tool_context.tenant_id, principal_id=tool_context.principal_id
+                )
+                config = db.scalars(stmt).first()
+
+                if not config:
+                    raise ServerError(TaskNotFoundError(message=f"Push notification config not found: {config_id}"))
+
+                # Soft delete by marking as inactive
+                config.is_active = False
+                config.updated_at = datetime.now(UTC)
+                db.commit()
+
+                logger.info(f"Deleted push notification config: {config_id} for tenant {tool_context.tenant_id}")
+
+                return {
+                    "id": config_id,
+                    "status": "deleted",
+                    "message": "Push notification configuration deleted successfully",
+                }
+
+        except ServerError:
+            raise
+        except Exception as e:
+            logger.error(f"Error deleting push notification config: {e}")
+            raise ServerError(InternalError(message=f"Failed to delete push notification config: {str(e)}"))
+
+    @staticmethod
+    def _serialize_for_a2a(response: Any) -> dict:
+        """Serialize a handler response for A2A protocol at the framework boundary.
+
+        This is the single serialization point for all A2A skill responses.
+        Handlers return raw Pydantic models; this method converts them to
+        A2A-compatible dicts with protocol fields (message, success).
+
+        - Pydantic models: serialized via model_dump(mode="json"), protocol fields added
+        - Dicts: passed through as-is (early-return error/stub responses from handlers)
+
+        Protocol fields added:
+        - message: human-readable string from response.__str__()
+        - success: derived from absence of errors field (for responses that have one)
+
+        Args:
+            response: Pydantic model or dict from a skill handler
+
+        Returns:
+            Dict ready for A2A DataPart
+        """
+        if isinstance(response, dict):
+            return response
+
+        response_data = response.model_dump(mode="json")
+        response_data["message"] = str(response)
+
+        # Derive success from errors field if present, default True otherwise
+        if "errors" in response_data:
+            response_data["success"] = not bool(response_data["errors"])
+        else:
+            response_data.setdefault("success", True)
+
+        return response_data
+
+    async def _handle_explicit_skill(
+        self,
+        skill_name: str,
+        parameters: dict,
+        auth_token: str | None,
+        push_notification_config: PushNotificationConfig | None = None,
+    ) -> dict:
+        """Handle explicit AdCP skill invocations.
+
+        Maps skill names to appropriate handlers and validates parameters.
+        Handlers return raw Pydantic models; serialization happens here at the boundary.
+
+        Args:
+            skill_name: The AdCP skill name (e.g., "get_products")
+            parameters: Dictionary of skill-specific parameters
+            auth_token: Bearer token for authentication (optional for discovery endpoints)
+            push_notification_config: Push notification config from A2A protocol layer
+
+        Returns:
+            Dictionary containing the skill result
+
+        Raises:
+            ValueError: For unknown skills or invalid parameters
+        """
+        # Inject push_notification_config into parameters for skills that need it
+        if push_notification_config and skill_name in ("create_media_buy", "sync_creatives"):
+            parameters = {**parameters, "push_notification_config": push_notification_config}
+        logger.info(f"Handling explicit skill: {skill_name} with parameters: {list(parameters.keys())}")
+
+        # Validate auth_token for non-discovery skills
+        # Discovery skills are defined in DISCOVERY_SKILLS constant at module level
+        if skill_name not in DISCOVERY_SKILLS and auth_token is None:
+            raise ServerError(InvalidRequestError(message="Authentication token required for skill invocation"))
+
+        # Map skill names to handlers
+        skill_handlers = {
+            # Core AdCP Discovery Skills
+            "get_adcp_capabilities": self._handle_get_adcp_capabilities_skill,
+            # Core AdCP Media Buy Skills
+            "get_products": self._handle_get_products_skill,
+            "create_media_buy": self._handle_create_media_buy_skill,
+            # ✅ NEW: Missing AdCP Discovery Skills (CRITICAL for protocol compliance)
+            "list_creative_formats": self._handle_list_creative_formats_skill,
+            "list_authorized_properties": self._handle_list_authorized_properties_skill,
+            # ✅ NEW: Missing Media Buy Management Skills (CRITICAL for campaign lifecycle)
+            "update_media_buy": self._handle_update_media_buy_skill,
+            "get_media_buy_delivery": self._handle_get_media_buy_delivery_skill,
+            "get_media_buys": self._handle_get_media_buys_skill,
+            "update_performance_index": self._handle_update_performance_index_skill,
+            # AdCP Spec Creative Management (centralized library approach)
+            "sync_creatives": self._handle_sync_creatives_skill,
+            "list_creatives": self._handle_list_creatives_skill,
+            # Creative Management & Approval
+            "approve_creative": self._handle_approve_creative_skill,
+            "get_media_buy_status": self._handle_get_media_buy_status_skill,
+            "optimize_media_buy": self._handle_optimize_media_buy_skill,
+            # Note: signals skills removed - should come from dedicated signals agents
+            # Note: legacy get_pricing/get_targeting removed - use get_products and get_adcp_capabilities instead
+        }
+
+        if skill_name not in skill_handlers:
+            available_skills = list(skill_handlers.keys())
+            raise ServerError(
+                MethodNotFoundError(message=f"Unknown skill '{skill_name}'. Available skills: {available_skills}")
+            )
+
+        try:
+            handler = skill_handlers[skill_name]
+            # Handlers return raw Pydantic models (or dicts for early-return errors)
+            result = await cast(Any, handler)(parameters, auth_token)
+            # Serialize at the boundary — models become dicts with protocol fields
+            return self._serialize_for_a2a(result)
+        except ServerError:
+            # Re-raise ServerError as-is (already properly formatted)
+            raise
+        except Exception as e:
+            logger.error(f"Error in skill handler {skill_name}: {e}")
+            raise ServerError(InternalError(message=f"Skill {skill_name} failed: {str(e)}"))
+
+    async def _handle_get_products_skill(self, parameters: dict, auth_token: str | None) -> Any:
+        """Handle explicit get_products skill invocation.
+
+        Aligned with adcp v1.2.1 spec - brand_manifest must be a dict.
+
+        NOTE: Authentication is OPTIONAL for this endpoint. Access depends on tenant's
+        brand_manifest_policy setting (public/require_brand/require_auth).
+        """
+        try:
+            # Create ToolContext from A2A auth info (if provided)
+            tool_context: ToolContext | MinimalContext
+
+            if auth_token:
+                # Token provided - authentication MUST succeed (don't silently fall back)
+                tool_context = self._create_tool_context_from_a2a(
+                    auth_token=auth_token,
+                    tool_name="get_products",
+                )
+            else:
+                # No auth token - create minimal Context-like object with headers for tenant detection
+                tool_context = MinimalContext.from_request_context()
+
+            # Normalize brand_manifest: URL string → dict (adcp v1.2.1)
+            brand_manifest = parameters.get("brand_manifest")
+            if isinstance(brand_manifest, str):
+                brand_manifest = {"url": brand_manifest}
+            elif brand_manifest is not None and not isinstance(brand_manifest, dict):
+                raise ServerError(
+                    InvalidParamsError(
+                        message=f"brand_manifest must be a dict or URL string, got {type(brand_manifest)}"
+                    )
+                )
+
+            brief = parameters.get("brief", "")
+
+            # Require either brand_manifest OR brief
+            if not brief and not brand_manifest:
+                raise ServerError(
+                    InvalidParamsError(message="Either 'brand_manifest' or 'brief' parameter is required")
+                )
+
+            # Call core function — _raw handles full schema validation via create_get_products_request
+            if isinstance(tool_context, ToolContext):
+                mcp_ctx = self._tool_context_to_mcp_context(tool_context)
+            else:
+                mcp_ctx = cast(ToolContext, tool_context)
+            response = await core_get_products_tool(
+                brief=brief,
+                brand_manifest=brand_manifest,
+                filters=parameters.get("filters"),
+                min_exposures=parameters.get("min_exposures"),
+                strategy_id=parameters.get("strategy_id"),
+                context=parameters.get("context"),
+                ctx=mcp_ctx,
+            )
+
+            # Apply v2 compat for pre-3.0 clients at the boundary
+            adcp_version = parameters.get("adcp_version")
+            if needs_v2_compat(adcp_version):
+                if isinstance(response, dict):
+                    response_data = response
+                else:
+                    response_data = response.model_dump(mode="json")
+                if "products" in response_data:
+                    response_data["products"] = add_v2_compat_to_products(response_data["products"])
+                return response_data
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in get_products skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to retrieve products: {str(e)}"))
+
+    async def _handle_create_media_buy_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit create_media_buy skill invocation.
+
+        IMPORTANT: This handler ONLY accepts AdCP spec-compliant format:
+        - packages[] (required) - each package must have budget
+        - brand_manifest (required)
+        - start_time (required)
+        - end_time (required)
+
+        Per AdCP v2.2.0 spec, budget is specified at the PACKAGE level, not top level.
+        Legacy format (product_ids, total_budget, start_date, end_date) is NOT supported.
+        """
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="create_media_buy",
+            )
+
+            # Parse parameters into typed request model (validation at A2A boundary)
+            from pydantic import ValidationError
+
+            from src.core.schemas import CreateMediaBuyRequest
+
+            # Pre-process: A2A field name translations
+            params = {**parameters}
+            if "custom_targeting" in params:
+                params.setdefault("targeting_overlay", params.pop("custom_targeting"))
+            # Set A2A defaults for optional fields
+            params.setdefault("po_number", f"A2A-{uuid.uuid4().hex[:8]}")
+            params.setdefault("buyer_ref", f"A2A-{tool_context.principal_id}")
+
+            # Validate required AdCP parameters (packages is optional in model but required by spec)
+            required_params = ["brand_manifest", "packages", "start_time", "end_time"]
+            missing_params = [p for p in required_params if p not in params]
+            if missing_params:
+                return {
+                    "success": False,
+                    "message": f"Missing required AdCP parameters: {missing_params}",
+                    "required_parameters": required_params,
+                    "received_parameters": list(parameters.keys()),
+                    "errors": [
+                        {
+                            "code": "validation_error",
+                            "message": f"Missing required AdCP parameters: {missing_params}",
+                        }
+                    ],
+                }
+
+            try:
+                req = CreateMediaBuyRequest.model_validate(params)
+            except ValidationError as e:
+                return {
+                    "success": False,
+                    "message": f"Invalid parameters: {e}",
+                    "required_parameters": required_params,
+                    "received_parameters": list(parameters.keys()),
+                    "errors": [
+                        {
+                            "code": "validation_error",
+                            "message": str(e),
+                        }
+                    ],
+                }
+
+            # Call core function with validated parameters
+            response = await core_create_media_buy_tool(
+                brand_manifest=params.get("brand_manifest"),
+                po_number=req.po_number,
+                buyer_ref=req.buyer_ref,
+                packages=params["packages"],  # Required — validated above
+                start_time=params.get("start_time"),
+                end_time=params.get("end_time"),
+                budget=params.get("budget"),
+                targeting_overlay=params.get("targeting_overlay", {}),
+                push_notification_config=params.get("push_notification_config"),
+                reporting_webhook=params.get("reporting_webhook"),
+                context=params.get("context"),
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in create_media_buy skill: {e}")
+            raise ServerError(InternalError(message=f"Failed to create media buy: {str(e)}"))
+
+    async def _handle_sync_creatives_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit sync_creatives skill invocation (AdCP spec endpoint)."""
+        try:
+            # DEBUG: Log incoming parameters
+            logger.info(f"[A2A sync_creatives] Received parameters keys: {list(parameters.keys())}")
+            logger.info(f"[A2A sync_creatives] assignments param: {parameters.get('assignments')}")
+            logger.info(f"[A2A sync_creatives] creatives count: {len(parameters.get('creatives', []))}")
+
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="sync_creatives",
+            )
+
+            # Map A2A parameters - creatives is required
+            if "creatives" not in parameters:
+                return {
+                    "success": False,
+                    "message": "Missing required parameter: 'creatives'",
+                    "required_parameters": ["creatives"],
+                    "received_parameters": list(parameters.keys()),
+                }
+
+            # Construct typed models at the A2A boundary (Pydantic validation at entry).
+            # Pre-process format_id: upgrade legacy strings to FormatId models.
+            from src.core.format_cache import upgrade_legacy_format_id
+
+            creatives = []
+            for c in parameters["creatives"]:
+                if isinstance(c, dict) and "format_id" in c:
+                    c = {**c, "format_id": upgrade_legacy_format_id(c["format_id"])}
+                creatives.append(CreativeAsset(**c) if isinstance(c, dict) else c)
+
+            ctx_param = parameters.get("context")
+            context = ContextObject(**ctx_param) if isinstance(ctx_param, dict) else ctx_param
+
+            # Call core function with spec-compliant parameters (AdCP v2.5)
+            response = core_sync_creatives_tool(
+                creatives=creatives,
+                # AdCP 2.5: Full upsert semantics (patch parameter removed)
+                creative_ids=parameters.get("creative_ids"),
+                assignments=parameters.get("assignments"),
+                delete_missing=parameters.get("delete_missing", False),
+                dry_run=parameters.get("dry_run", False),
+                validation_mode=parameters.get("validation_mode", "strict"),
+                push_notification_config=parameters.get("push_notification_config"),
+                context=context,
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in sync_creatives skill: {e}")
+            raise ServerError(InternalError(message=f"Failed to sync creatives: {str(e)}"))
+
+    async def _handle_list_creatives_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit list_creatives skill invocation (AdCP spec endpoint)."""
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="list_creatives",
+            )
+
+            # Call core function with optional parameters (fixing original validation bug)
+            response = core_list_creatives_tool(
+                media_buy_id=parameters.get("media_buy_id"),
+                buyer_ref=parameters.get("buyer_ref"),
+                status=parameters.get("status"),
+                format=parameters.get("format"),
+                tags=parameters.get("tags", []),
+                created_after=parameters.get("created_after"),
+                created_before=parameters.get("created_before"),
+                search=parameters.get("search"),
+                page=parameters.get("page", 1),
+                limit=parameters.get("limit", 50),
+                sort_by=parameters.get("sort_by", "created_date"),
+                sort_order=parameters.get("sort_order", "desc"),
+                context=parameters.get("context"),
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in list_creatives skill: {e}")
+            raise ServerError(InternalError(message=f"Failed to list creatives: {str(e)}"))
+
+    async def _handle_create_creative_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit create_creative skill invocation."""
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="create_creative",
+            )
+
+            # Map A2A parameters - format_id, content_uri, and name are required
+            required_params = ["format_id", "content_uri", "name"]
+            missing_params = [param for param in required_params if param not in parameters]
+
+            if missing_params:
+                return {
+                    "success": False,
+                    "message": f"Missing required parameters: {missing_params}",
+                    "required_parameters": required_params,
+                    "received_parameters": list(parameters.keys()),
+                }
+
+            # TODO: Implement create_creative tool
+            # Call core function with individual parameters
+            # response = core_create_creative_tool(...)
+            raise ServerError(UnsupportedOperationError(message="create_creative skill not yet implemented"))
+
+        except Exception as e:
+            logger.error(f"Error in create_creative skill: {e}")
+            raise ServerError(InternalError(message=f"Failed to create creative: {str(e)}"))
+
+    async def _handle_get_creatives_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit get_creatives skill invocation."""
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="get_creatives",
+            )
+
+            # TODO: Implement get_creatives tool
+            # response = core_get_creatives_tool(
+            #     group_id=parameters.get("group_id"),
+            #     media_buy_id=parameters.get("media_buy_id"),
+            #     status=parameters.get("status"),
+            #     tags=parameters.get("tags", []),
+            #     include_assignments=parameters.get("include_assignments", False),
+            #     context=self._tool_context_to_mcp_context(tool_context),
+            # )
+            raise ServerError(UnsupportedOperationError(message="get_creatives skill not yet implemented"))
+
+        except Exception as e:
+            logger.error(f"Error in get_creatives skill: {e}")
+            raise ServerError(InternalError(message=f"Failed to get creatives: {str(e)}"))
+
+    async def _handle_assign_creative_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit assign_creative skill invocation."""
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="assign_creative",
+            )
+
+            # Map A2A parameters - media_buy_id, package_id, and creative_id are required
+            required_params = ["media_buy_id", "package_id", "creative_id"]
+            missing_params = [param for param in required_params if param not in parameters]
+
+            if missing_params:
+                return {
+                    "success": False,
+                    "message": f"Missing required parameters: {missing_params}",
+                    "required_parameters": required_params,
+                    "received_parameters": list(parameters.keys()),
+                }
+
+            # TODO: Implement assign_creative tool
+            # response = core_assign_creative_tool(
+            #     media_buy_id=parameters["media_buy_id"],
+            #     package_id=parameters["package_id"],
+            #     creative_id=parameters["creative_id"],
+            #     weight=parameters.get("weight", 100),
+            #     percentage_goal=parameters.get("percentage_goal"),
+            #     rotation_type=parameters.get("rotation_type", "weighted"),
+            #     override_click_url=parameters.get("override_click_url"),
+            #     context=self._tool_context_to_mcp_context(tool_context),
+            # )
+            raise ServerError(UnsupportedOperationError(message="assign_creative skill not yet implemented"))
+
+        except Exception as e:
+            logger.error(f"Error in assign_creative skill: {e}")
+            raise ServerError(InternalError(message=f"Failed to assign creative: {str(e)}"))
+
+    async def _handle_approve_creative_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit approve_creative skill invocation."""
+        # TODO: Implement full approve_creative skill handler
+        return {
+            "success": False,
+            "message": "approve_creative skill not yet implemented in explicit invocation",
+            "parameters_received": parameters,
+        }
+
+    # Signals skill handlers removed - should come from dedicated signals agents
+
+    async def _handle_get_media_buy_status_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit get_media_buy_status skill invocation."""
+        # TODO: Implement full get_media_buy_status skill handler
+        return {
+            "success": False,
+            "message": "get_media_buy_status skill not yet implemented in explicit invocation",
+            "parameters_received": parameters,
+        }
+
+    async def _handle_optimize_media_buy_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit optimize_media_buy skill invocation."""
+        # TODO: Implement full optimize_media_buy skill handler
+        return {
+            "success": False,
+            "message": "optimize_media_buy skill not yet implemented in explicit invocation",
+            "parameters_received": parameters,
+        }
+
+    async def _handle_get_adcp_capabilities_skill(self, parameters: dict, auth_token: str | None) -> Any:
+        """Handle explicit get_adcp_capabilities skill invocation (CRITICAL AdCP discovery endpoint).
+
+        NOTE: Authentication is OPTIONAL for this endpoint since it returns public discovery data.
+        Returns agent capabilities including supported protocols, targeting, and portfolio info.
+        """
+        try:
+            # Create ToolContext from A2A auth info (if provided)
+            tool_context: ToolContext | MinimalContext
+
+            if auth_token:
+                # Token provided - authentication MUST succeed (don't silently fall back)
+                tool_context = self._create_tool_context_from_a2a(
+                    auth_token=auth_token,
+                    tool_name="get_adcp_capabilities",
+                )
+            else:
+                # No auth token - create minimal Context-like object with headers for tenant detection
+                tool_context = MinimalContext.from_request_context()
+
+            # Import and call the core implementation
+            from src.core.tools.capabilities import get_adcp_capabilities_raw
+
+            # Call core function with context (protocols param is currently unused by _raw)
+            if isinstance(tool_context, ToolContext):
+                mcp_ctx = self._tool_context_to_mcp_context(tool_context)
+            else:
+                # MinimalContext works with core tools directly
+                mcp_ctx = cast(ToolContext, tool_context)
+
+            response = await get_adcp_capabilities_raw(
+                protocols=parameters.get("protocols"),
+                ctx=mcp_ctx,
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in get_adcp_capabilities skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to retrieve AdCP capabilities: {str(e)}"))
+
+    async def _handle_list_creative_formats_skill(self, parameters: dict, auth_token: str | None) -> Any:
+        """Handle explicit list_creative_formats skill invocation (CRITICAL AdCP endpoint).
+
+        NOTE: Authentication is OPTIONAL for this endpoint since it returns public discovery data.
+        """
+        try:
+            # Create ToolContext from A2A auth info (if provided)
+            tool_context: ToolContext | MinimalContext
+
+            if auth_token:
+                # Token provided - authentication MUST succeed (don't silently fall back)
+                tool_context = self._create_tool_context_from_a2a(
+                    auth_token=auth_token,
+                    tool_name="list_creative_formats",
+                )
+            else:
+                # No auth token - create minimal Context-like object with headers for tenant detection
+                tool_context = MinimalContext.from_request_context()
+
+            # Build request from parameters (all optional)
+            # Use local schema (extends library type) for proper type compatibility
+            from src.core.schemas import ListCreativeFormatsRequest
+
+            req = ListCreativeFormatsRequest(
+                type=parameters.get("type"),
+                format_ids=parameters.get("format_ids"),
+                is_responsive=parameters.get("is_responsive"),
+                name_search=parameters.get("name_search"),
+                asset_types=parameters.get("asset_types"),
+                min_width=parameters.get("min_width"),
+                max_width=parameters.get("max_width"),
+                min_height=parameters.get("min_height"),
+                max_height=parameters.get("max_height"),
+                context=parameters.get("context"),
+            )
+
+            # Call core function with request
+            # tool_context can be ToolContext or MinimalContext
+            if isinstance(tool_context, ToolContext):
+                mcp_ctx = self._tool_context_to_mcp_context(tool_context)
+            else:
+                # MinimalContext works with core tools directly
+                mcp_ctx = cast(ToolContext, tool_context)
+            response = core_list_creative_formats_tool(req=req, ctx=mcp_ctx)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in list_creative_formats skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to retrieve creative formats: {str(e)}"))
+
+    async def _handle_list_authorized_properties_skill(self, parameters: dict, auth_token: str | None) -> Any:
+        """Handle explicit list_authorized_properties skill invocation (CRITICAL AdCP endpoint).
+
+        NOTE: Authentication is OPTIONAL for this endpoint since it returns public discovery data.
+        If no auth token provided, uses headers for tenant detection.
+
+        Per AdCP v2.4 spec, returns publisher_domains (not properties/tags).
+        """
+        try:
+            # Create ToolContext from A2A auth info (which sets tenant context as side effect)
+            tool_context: ToolContext | MinimalContext | None = None
+
+            if auth_token:
+                # Token provided - authentication MUST succeed (don't silently fall back)
+                tool_context = self._create_tool_context_from_a2a(
+                    auth_token=auth_token,
+                    tool_name="list_authorized_properties",
+                )
+            else:
+                # No auth token - create minimal Context-like object with headers for tenant detection
+                # This allows tenant detection via Apx-Incoming-Host, Host, or x-adcp-tenant headers
+                tool_context = MinimalContext.from_request_context()
+
+            # Map A2A parameters to ListAuthorizedPropertiesRequest
+            # Note: ListAuthorizedPropertiesRequest was removed from adcp 3.2.0, use local schema
+            from src.core.schemas import ListAuthorizedPropertiesRequest
+
+            # Warn about deprecated 'tags' parameter (removed in AdCP 2.5)
+            if "tags" in parameters:
+                logger.warning(
+                    "Deprecated parameter 'tags' passed to list_authorized_properties. "
+                    "This parameter was removed in AdCP 2.5 and will be ignored."
+                )
+
+            request = ListAuthorizedPropertiesRequest(context=parameters.get("context"))
+
+            # Call core function directly
+            # Context can be None for unauthenticated calls - tenant will be detected from headers
+            response = core_list_authorized_properties_tool(req=request, ctx=cast(Any, tool_context))
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in list_authorized_properties skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to retrieve authorized properties: {str(e)}"))
+
+    async def _handle_update_media_buy_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit update_media_buy skill invocation (CRITICAL for campaign management)."""
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="update_media_buy",
+            )
+
+            # Parse parameters into typed request model (validation at A2A boundary)
+            from pydantic import ValidationError
+
+            from src.core.schemas import UpdateMediaBuyRequest
+
+            # Pre-process: support legacy 'updates.packages' → 'packages'
+            params = {**parameters}
+            if "packages" not in params and "updates" in params:
+                legacy_updates = params.pop("updates")
+                if isinstance(legacy_updates, dict) and "packages" in legacy_updates:
+                    params["packages"] = legacy_updates["packages"]
+
+            # Require at least one identifier
+            if "media_buy_id" not in params and "buyer_ref" not in params:
+                raise ServerError(
+                    InvalidParamsError(
+                        message="Missing required parameter: one of 'media_buy_id' or 'buyer_ref' is required"
+                    )
+                )
+
+            # Validate top-level fields via typed model (packages validated by _raw
+            # which handles legacy formats with extra fields like 'status')
+            try:
+                req = UpdateMediaBuyRequest(
+                    media_buy_id=params.get("media_buy_id"),
+                    buyer_ref=params.get("buyer_ref"),
+                    paused=params.get("paused"),
+                    start_time=params.get("start_time"),
+                    end_time=params.get("end_time"),
+                    context=params.get("context"),
+                )
+            except ValidationError as e:
+                raise ServerError(InvalidParamsError(message=f"Invalid parameters: {e}"))
+
+            # Call core function with validated fields + raw nested structures
+            response = core_update_media_buy_tool(
+                media_buy_id=req.media_buy_id or "",
+                buyer_ref=req.buyer_ref,
+                paused=req.paused,
+                start_time=params.get("start_time"),
+                end_time=params.get("end_time"),
+                budget=params.get("budget"),
+                packages=params.get("packages"),
+                push_notification_config=params.get("push_notification_config"),
+                context=params.get("context"),
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in update_media_buy skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to update media buy: {str(e)}"))
+
+    async def _handle_get_media_buy_delivery_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit get_media_buy_delivery skill invocation (CRITICAL for monitoring).
+
+        Per AdCP spec, all parameters are optional:
+        - media_buy_ids (plural, per AdCP v1.6.0 spec) or media_buy_id (singular, legacy)
+        - buyer_refs: Filter by buyer reference IDs
+        - status_filter: Filter by status (active, pending, paused, completed, failed, all)
+        - start_date: Start date for reporting period (YYYY-MM-DD)
+        - end_date: End date for reporting period (YYYY-MM-DD)
+
+        When no media_buy_ids are provided, returns delivery data for all media buys
+        the requester has access to, filtered by the provided criteria.
+        """
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="get_media_buy_delivery",
+            )
+
+            # Parse parameters into typed request model (validation at A2A boundary)
+            # Pre-process: support singular media_buy_id (legacy) → media_buy_ids (spec)
+            from src.core.schemas import GetMediaBuyDeliveryRequest
+
+            params = {**parameters}
+            if "media_buy_ids" not in params and "media_buy_id" in params:
+                params["media_buy_ids"] = [params.pop("media_buy_id")]
+
+            req = GetMediaBuyDeliveryRequest.model_validate(params)
+
+            # Call core function with validated fields (all optional per AdCP spec)
+            # Pass raw values for fields where _raw handles its own type coercion
+            # (e.g., status_filter str→MediaBuyStatus, date str→date)
+            response = core_get_media_buy_delivery_tool(
+                media_buy_ids=req.media_buy_ids,
+                buyer_refs=req.buyer_refs,
+                status_filter=params.get("status_filter"),
+                start_date=params.get("start_date"),
+                end_date=params.get("end_date"),
+                context=params.get("context"),
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in get_media_buy_delivery skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to get media buy delivery: {str(e)}"))
+
+    async def _handle_get_media_buys_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle get_media_buys skill invocation."""
+        try:
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="get_media_buys",
+            )
+
+            response = core_get_media_buys_tool(
+                media_buy_ids=parameters.get("media_buy_ids"),
+                buyer_refs=parameters.get("buyer_refs"),
+                status_filter=parameters.get("status_filter"),
+                include_snapshot=parameters.get("include_snapshot", False),
+                account_id=parameters.get("account_id"),
+                context=parameters.get("context"),
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in get_media_buys skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to get media buys: {str(e)}"))
+
+    async def _handle_update_performance_index_skill(self, parameters: dict, auth_token: str) -> dict:
+        """Handle explicit update_performance_index skill invocation (CRITICAL for optimization)."""
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="update_performance_index",
+            )
+
+            # Parse parameters into typed request model (validation at A2A boundary)
+            from pydantic import ValidationError
+
+            from src.core.schemas import UpdatePerformanceIndexRequest
+
+            try:
+                req = UpdatePerformanceIndexRequest.model_validate(parameters)
+            except ValidationError as e:
+                return {
+                    "success": False,
+                    "message": f"Invalid parameters: {e}",
+                    "required_parameters": ["media_buy_id", "performance_data"],
+                    "received_parameters": list(parameters.keys()),
+                }
+
+            # Call core function with validated fields
+            response = core_update_performance_index_tool(
+                media_buy_id=req.media_buy_id,
+                performance_data=[p.model_dump(mode="json") for p in req.performance_data],
+                context=req.context,
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error in update_performance_index skill: {e}")
+            raise ServerError(InternalError(message=f"Unable to update performance index: {str(e)}"))
+
+    async def _get_products(self, query: str, auth_token: str | None) -> dict:
+        """Get available advertising products by calling core functions directly.
+
+        Args:
+            query: User's product query
+            auth_token: Bearer token for authentication
+
+        Returns:
+            Dictionary containing product information
+        """
+        try:
+            # Create ToolContext from A2A auth info
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="get_products",
+            )
+
+            # Extract brand name from query and create brand_manifest
+            # This provides backward compatibility for natural language queries
+            brand_name = self._extract_brand_name_from_query(query)
+            brand_manifest = {"name": brand_name} if brand_name else None
+
+            # Call core function directly using the underlying function
+            response = await core_get_products_tool(
+                brief=query,
+                brand_manifest=brand_manifest,
+                ctx=self._tool_context_to_mcp_context(tool_context),
+            )
+
+            # Convert to A2A response format with v2.x backward compatibility
+            products = [product.model_dump(mode="json") for product in response.products]
+            products = add_v2_compat_to_products(products)
+            return {
+                "products": products,
+                "message": str(response),  # Use __str__ method for human-readable message
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting products: {e}")
+            # Return empty products list instead of fallback data
+            return {"products": [], "message": f"Unable to retrieve products: {str(e)}"}
+
+    def _extract_brand_name_from_query(self, query: str) -> str:
+        """Extract or infer brand name from the user query.
+
+        Used for backward compatibility with natural language queries.
+        Extracts a brand name to populate brand_manifest for adcp v1.2.1.
+        """
+        # Look for common patterns that might indicate the brand/offering
+        query_lower = query.lower()
+
+        # If the query mentions specific brands or products, use those
+        if "advertise" in query_lower or "promote" in query_lower:
+            # Try to extract what they're promoting
+            parts = query.split()
+            for i, word in enumerate(parts):
+                if word.lower() in ["advertise", "promote", "advertising", "promoting"]:
+                    if i + 1 < len(parts):
+                        # Take the next few words as the brand name
+                        brand_parts = parts[i + 1 : i + 4]  # Take up to 3 words
+                        brand_name = " ".join(brand_parts).strip(".,!?")
+                        if len(brand_name) > 5:  # Make sure it's substantial
+                            return f"Business promoting {brand_name}"
+
+        # Default brand name based on query type
+        if any(word in query_lower for word in ["video", "display", "banner", "ad"]):
+            return "Brand advertising products and services"
+        elif any(word in query_lower for word in ["coffee", "beverage", "food"]):
+            return "Food and beverage company"
+        elif any(word in query_lower for word in ["tech", "software", "app", "digital"]):
+            return "Technology company digital products"
+        else:
+            # Generic fallback that should pass AdCP validation
+            return "Business advertising products and services"
+
+    async def _create_media_buy(self, request: str, auth_token: str | None) -> dict:
+        """Create a media buy based on the request.
+
+        Args:
+            request: User's media buy request
+            auth_token: Bearer token for authentication
+
+        Returns:
+            Dictionary containing media buy creation result
+        """
+        # For now, return a mock response indicating authentication is working
+        # but media buy creation needs more implementation
+        try:
+            # Verify authentication works
+            tool_context = self._create_tool_context_from_a2a(
+                auth_token=auth_token,
+                tool_name="create_media_buy",
+            )
+
+            return {
+                "success": False,
+                "message": f"Authentication successful for {tool_context.principal_id}. To create a media buy, use explicit skill invocation with AdCP v2.2.0 spec-compliant format.",
+                "required_fields": ["brand_manifest", "packages", "start_time", "end_time"],
+                "note": "Per AdCP v2.2.0 spec, budget is specified at the PACKAGE level, not top level",
+                "authenticated_tenant": tool_context.tenant_id,
+                "authenticated_principal": tool_context.principal_id,
+                "example": {
+                    "brand_manifest": "https://example.com/brand-manifest.json",
+                    "packages": [
+                        {
+                            "buyer_ref": "pkg_1",
+                            "product_id": "video_premium",
+                            "budget": 10000.0,  # Budget is per package (required)
+                            "pricing_option_id": "cpm-fixed",
+                        }
+                    ],
+                    # Note: NO top-level budget field per AdCP v2.2.0 spec
+                    "start_time": "2025-02-01T00:00:00Z",
+                    "end_time": "2025-02-28T23:59:59Z",
+                },
+                "documentation": "https://adcontextprotocol.org/docs/",
+            }
+        except Exception as e:
+            logger.error(f"Error in media buy creation: {e}")
+            raise ServerError(InternalError(message=f"Authentication failed: {str(e)}"))
+
+
+def create_agent_card() -> AgentCard:
+    """Create the agent card describing capabilities.
+
+    Returns:
+        AgentCard with Prebid Sales Agent capabilities
+    """
+    # Use configured domain for agent card
+    # Note: This will be overridden dynamically in the endpoint handlers
+    # Fallback to localhost if SALES_AGENT_DOMAIN not configured
+    server_url = get_a2a_server_url() or "http://localhost:8091/a2a"
+
+    from a2a.types import AgentCapabilities, AgentSkill
+    from adcp import get_adcp_version
+
+    # Get sales agent version from package metadata or pyproject.toml
+    sales_agent_version = get_version()
+
+    # Create AdCP extension (AdCP 2.5 spec)
+    # As of adcp 2.12.1, get_adcp_version() returns the protocol version (e.g., "2.5.0")
+    # Previously it returned the schema version (e.g., "v1"), but this was fixed upstream
+    protocol_version = get_adcp_version()
+    adcp_extension = AgentExtension(
+        uri=f"https://adcontextprotocol.org/schemas/{protocol_version}/protocols/adcp-extension.json",
+        description="AdCP protocol version and supported domains",
+        params={
+            "adcp_version": protocol_version,
+            "protocols_supported": ["media_buy"],  # Only media_buy protocol is currently supported
+        },
+    )
+
+    # Create the agent card with minimal required fields
+    agent_card = AgentCard(
+        name="Prebid Sales Agent",
+        description="AI agent for programmatic advertising campaigns via AdCP protocol",
+        version=sales_agent_version,
+        protocol_version="1.0",
+        capabilities=AgentCapabilities(
+            push_notifications=True,
+            extensions=[adcp_extension],
+        ),
+        default_input_modes=["message"],
+        default_output_modes=["message"],
+        skills=[
+            # Core AdCP Discovery Skills
+            AgentSkill(
+                id="get_adcp_capabilities",
+                name="get_adcp_capabilities",
+                description="Get the capabilities of this AdCP sales agent including supported protocols and targeting",
+                tags=["capabilities", "discovery", "adcp"],
+            ),
+            # Core AdCP Media Buy Skills
+            AgentSkill(
+                id="get_products",
+                name="get_products",
+                description="Browse available advertising products and inventory",
+                tags=["products", "inventory", "catalog", "adcp"],
+            ),
+            AgentSkill(
+                id="create_media_buy",
+                name="create_media_buy",
+                description="Create advertising campaigns with products, targeting, and budget",
+                tags=["campaign", "media", "buy", "adcp"],
+            ),
+            # ✅ NEW: Critical AdCP Discovery Endpoints (REQUIRED for protocol compliance)
+            AgentSkill(
+                id="list_creative_formats",
+                name="list_creative_formats",
+                description="List all available creative formats and specifications",
+                tags=["creative", "formats", "specs", "discovery", "adcp"],
+            ),
+            AgentSkill(
+                id="list_authorized_properties",
+                name="list_authorized_properties",
+                description="List authorized properties this agent can sell advertising for",
+                tags=["properties", "authorization", "publisher", "adcp"],
+            ),
+            # ✅ NEW: Media Buy Management Skills (CRITICAL for campaign lifecycle)
+            AgentSkill(
+                id="update_media_buy",
+                name="update_media_buy",
+                description="Update existing media buy configuration and settings",
+                tags=["campaign", "update", "management", "adcp"],
+            ),
+            AgentSkill(
+                id="get_media_buy_delivery",
+                name="get_media_buy_delivery",
+                description="Get delivery metrics and performance data for media buys",
+                tags=["delivery", "metrics", "performance", "monitoring", "adcp"],
+            ),
+            AgentSkill(
+                id="get_media_buys",
+                name="get_media_buys",
+                description="Get media buy status, creative approval state, and optional near-real-time delivery snapshots",
+                tags=["media_buy", "status", "creative", "snapshot", "monitoring", "adcp"],
+            ),
+            AgentSkill(
+                id="update_performance_index",
+                name="update_performance_index",
+                description="Update performance data and optimization metrics",
+                tags=["performance", "optimization", "metrics", "adcp"],
+            ),
+            # AdCP Spec Creative Management (centralized library approach)
+            AgentSkill(
+                id="sync_creatives",
+                name="sync_creatives",
+                description="Upload and manage creative assets to centralized library (AdCP spec)",
+                tags=["creative", "sync", "library", "adcp", "spec"],
+            ),
+            AgentSkill(
+                id="list_creatives",
+                name="list_creatives",
+                description="Search and query creative library with advanced filtering (AdCP spec)",
+                tags=["creative", "library", "search", "adcp", "spec"],
+            ),
+            # Creative Management & Approval
+            AgentSkill(
+                id="approve_creative",
+                name="approve_creative",
+                description="Review and approve/reject creative assets (admin only)",
+                tags=["creative", "approval", "review", "adcp"],
+            ),
+            AgentSkill(
+                id="get_media_buy_status",
+                name="get_media_buy_status",
+                description="Check status and performance of media buys",
+                tags=["status", "performance", "tracking", "adcp"],
+            ),
+            AgentSkill(
+                id="optimize_media_buy",
+                name="optimize_media_buy",
+                description="Optimize media buy performance and targeting",
+                tags=["optimization", "performance", "targeting", "adcp"],
+            ),
+            # Note: signals skills removed - should come from dedicated signals agents
+            # Note: legacy get_pricing/get_targeting removed - use get_products and get_adcp_capabilities instead
+        ],
+        url=server_url,
+        documentation_url="https://github.com/your-org/adcp-sales-agent",
+    )
+
+    return agent_card
+
+
+def main():
+    """Main entry point for the A2A server."""
+    host = os.getenv("A2A_HOST", "0.0.0.0")
+    port = int(os.getenv("A2A_PORT", "8091"))
+
+    # Initialize components
+    agent_card = create_agent_card()
+    request_handler = AdCPRequestHandler()
+
+    logger.info(f"Starting AdCP A2A Agent on {host}:{port}")
+    logger.info("Using official a2a-sdk with A2AStarletteApplication")
+
+    # Create Starlette application
+    a2a_app = A2AStarletteApplication(
+        agent_card=agent_card,
+        http_handler=request_handler,
+    )
+
+    # Build the Starlette app with standard A2A specification endpoints
+    app = a2a_app.build(
+        agent_card_url="/.well-known/agent-card.json",  # Primary A2A discovery endpoint
+        rpc_url="/a2a",  # Standard JSON-RPC endpoint
+        extended_agent_card_url="/agent.json",
+    )
+
+    # Add CORS middleware for browser compatibility (must be added early to wrap all responses)
+    from starlette.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins for A2A protocol
+        allow_credentials=True,
+        allow_methods=["*"],  # Allow all HTTP methods
+        allow_headers=["*"],  # Allow all headers
+    )
+    logger.info("CORS middleware enabled for browser compatibility")
+
+    # Override the agent card endpoints to support tenant-specific URLs
+    def create_dynamic_agent_card(request) -> AgentCard:
+        """Create agent card with tenant-specific URL from request headers."""
+        # Debug logging
+        logger.info(f"Agent card request headers: {dict(request.headers)}")
+
+        # Helper to get header case-insensitively
+        def get_header_case_insensitive(headers, header_name: str) -> str | None:
+            """Get header value with case-insensitive lookup."""
+            for key, value in headers.items():
+                if key.lower() == header_name.lower():
+                    return value
+            return None
+
+        # Determine protocol based on host (localhost = HTTP, others = HTTPS)
+        def get_protocol(hostname: str) -> str:
+            """Return HTTP for localhost, HTTPS for production domains."""
+            return "http" if hostname.startswith("localhost") or hostname.startswith("127.0.0.1") else "https"
+
+        # Check for Approximated routing first (takes priority)
+        apx_incoming_host = get_header_case_insensitive(request.headers, "Apx-Incoming-Host")
+        if apx_incoming_host:
+            # Use the original host from Approximated - preserve the exact domain
+            protocol = get_protocol(apx_incoming_host)
+            server_url = f"{protocol}://{apx_incoming_host}/a2a"
+            logger.info(f"Using Apx-Incoming-Host: {apx_incoming_host} -> {server_url}")
+        else:
+            # Fallback to Host header
+            host = get_header_case_insensitive(request.headers, "Host") or ""
+            sales_domain = get_sales_agent_domain()
+            if host and host != sales_domain:
+                # For external domains or localhost, use appropriate protocol
+                protocol = get_protocol(host)
+                server_url = f"{protocol}://{host}/a2a"
+                logger.info(f"Using Host header: {host} -> {server_url}")
+            else:
+                # Default fallback - configured production URL or localhost
+                server_url = get_a2a_server_url() or "http://localhost:8091/a2a"
+                logger.info(f"Using default URL: {server_url}")
+
+        # Create a copy of the static agent card with dynamic URL
+        dynamic_card = agent_card.model_copy()
+        dynamic_card.url = server_url
+        return dynamic_card
+
+    # Replace the library's agent card endpoints with our dynamic ones
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def dynamic_agent_discovery(request):
+        """Override for /.well-known/agent.json with tenant-specific URL."""
+        from starlette.responses import Response
+
+        # Handle OPTIONS preflight requests (CORS middleware will add headers)
+        if request.method == "OPTIONS":
+            return Response(status_code=204)
+
+        dynamic_card = create_dynamic_agent_card(request)
+        # CORS middleware automatically adds CORS headers
+        return JSONResponse(dynamic_card.model_dump(mode="json"))
+
+    async def dynamic_agent_card_endpoint(request):
+        """Override for /agent.json with tenant-specific URL."""
+        from starlette.responses import Response
+
+        # Handle OPTIONS preflight requests (CORS middleware will add headers)
+        if request.method == "OPTIONS":
+            return Response(status_code=204)
+
+        dynamic_card = create_dynamic_agent_card(request)
+        # CORS middleware automatically adds CORS headers
+        return JSONResponse(dynamic_card.model_dump(mode="json"))
+
+    # Find and replace the existing routes to ensure proper A2A specification compliance
+    new_routes = []
+    for route in app.routes:
+        if hasattr(route, "path"):
+            if route.path == "/.well-known/agent.json":
+                # Replace with our dynamic endpoint (legacy compatibility)
+                new_routes.append(Route("/.well-known/agent.json", dynamic_agent_discovery, methods=["GET", "OPTIONS"]))
+                logger.info("Replaced /.well-known/agent.json with dynamic version")
+            elif route.path == "/.well-known/agent-card.json":
+                # Replace with our dynamic endpoint (primary A2A discovery)
+                new_routes.append(
+                    Route("/.well-known/agent-card.json", dynamic_agent_discovery, methods=["GET", "OPTIONS"])
+                )
+                logger.info("Replaced /.well-known/agent-card.json with dynamic version")
+            elif route.path == "/agent.json":
+                # Replace with our dynamic endpoint
+                new_routes.append(Route("/agent.json", dynamic_agent_card_endpoint, methods=["GET", "OPTIONS"]))
+                logger.info("Replaced /agent.json with dynamic version")
+            else:
+                new_routes.append(route)
+        else:
+            new_routes.append(route)
+
+    # Update the app's router with new routes
+    app.router.routes = new_routes
+
+    # Add debug endpoint for tenant detection
+    from starlette.routing import Route
+
+    from src.core.config_loader import get_tenant_by_virtual_host
+
+    async def debug_tenant_endpoint(request):
+        """Debug endpoint to check tenant detection from headers."""
+
+        # Helper to get header case-insensitively
+        def get_header_case_insensitive(headers, header_name: str) -> str | None:
+            """Get header value with case-insensitive lookup."""
+            for key, value in headers.items():
+                if key.lower() == header_name.lower():
+                    return value
+            return None
+
+        # Check for Apx-Incoming-Host header (case-insensitive)
+        apx_host = get_header_case_insensitive(request.headers, "Apx-Incoming-Host")
+        host_header = get_header_case_insensitive(request.headers, "Host")
+
+        # Resolve tenant using same logic as auth
+        tenant_id = None
+        tenant_name = None
+        detection_method = None
+
+        # Try Apx-Incoming-Host first
+        if apx_host:
+            tenant = get_tenant_by_virtual_host(apx_host)
+            if tenant:
+                tenant_id = tenant.get("tenant_id")
+                tenant_name = tenant.get("name")
+                detection_method = "apx-incoming-host"
+
+        # Try Host header subdomain
+        if not tenant_id and host_header:
+            subdomain = host_header.split(".")[0] if "." in host_header else None
+            if subdomain and subdomain not in ["localhost", "adcp-sales-agent", "www", "sales-agent"]:
+                tenant_id = subdomain
+                detection_method = "host-subdomain"
+
+        response_data = {
+            "tenant_id": tenant_id,
+            "tenant_name": tenant_name,
+            "detection_method": detection_method,
+            "apx_incoming_host": apx_host,
+            "host": host_header,
+            "service": "a2a",
+        }
+
+        # Add X-Tenant-Id header to response
+        response = JSONResponse(response_data)
+        if tenant_id:
+            response.headers["X-Tenant-Id"] = tenant_id
+
+        return response
+
+    # Add debug route
+    app.router.routes.append(Route("/debug/tenant", debug_tenant_endpoint, methods=["GET"]))
+
+    # Add middleware for backward compatibility with numeric messageId
+    @app.middleware("http")
+    async def messageId_compatibility_middleware(request, call_next):
+        """Middleware to handle both numeric and string messageId for backward compatibility."""
+        import json
+
+        # Only process JSON-RPC requests to /a2a
+        if request.url.path == "/a2a" and request.method == "POST":
+            # Read the body
+            body = await request.body()
+            try:
+                data = json.loads(body)
+
+                # Check if this is a JSON-RPC request with numeric messageId
+                if isinstance(data, dict) and "params" in data:
+                    params = data.get("params", {})
+                    if "message" in params and isinstance(params["message"], dict):
+                        message = params["message"]
+                        # Convert numeric messageId to string if needed
+                        if "messageId" in message and isinstance(message["messageId"], int | float):
+                            logger.warning(
+                                f"Converting numeric messageId {message['messageId']} to string for compatibility"
+                            )
+                            message["messageId"] = str(message["messageId"])
+                            # Update the request body
+                            body = json.dumps(data).encode()
+
+                # Also handle the outer id field for JSON-RPC
+                if "id" in data and isinstance(data["id"], int | float):
+                    logger.warning(f"Converting numeric JSON-RPC id {data['id']} to string for compatibility")
+                    data["id"] = str(data["id"])
+                    body = json.dumps(data).encode()
+
+            except (json.JSONDecodeError, KeyError):
+                # Not JSON or doesn't have expected structure, pass through
+                pass
+
+            # Create new request with potentially modified body
+            from starlette.requests import Request
+
+            request = Request(request.scope, receive=lambda: {"type": "http.request", "body": body})
+
+        response = await call_next(request)
+        return response
+
+    # Add authentication middleware for Bearer token extraction
+    @app.middleware("http")
+    async def auth_middleware(request, call_next):
+        """Extract Bearer token and set authentication context for A2A requests.
+
+        Accepts authentication via either:
+        - Authorization: Bearer <token> (standard A2A/HTTP)
+        - x-adcp-auth: <token> (AdCP convention, for compatibility with MCP)
+        """
+        # Only process A2A endpoint requests (handle both /a2a and /a2a/)
+        if request.url.path in ["/a2a", "/a2a/"] and request.method == "POST":
+            # Try Authorization header first (standard)
+            token = None
+            auth_source = None
+
+            for key, value in request.headers.items():
+                if key.lower() == "authorization":
+                    auth_header = value.strip()
+                    if auth_header.startswith("Bearer "):
+                        token = auth_header[7:]  # Remove "Bearer " prefix
+                        auth_source = "Authorization"
+                        break
+                elif key.lower() == "x-adcp-auth":
+                    # Also accept x-adcp-auth for compatibility with MCP clients
+                    token = value.strip()
+                    auth_source = "x-adcp-auth"
+                    # Don't break - prefer Authorization if both present
+
+            if token:
+                _request_auth_token.set(token)
+                _request_headers.set(dict(request.headers))
+                logger.info(f"Extracted token from {auth_source} header for A2A request: {token[:10]}...")
+            else:
+                logger.warning(
+                    f"A2A request to {request.url.path} missing authentication (checked Authorization and x-adcp-auth headers)"
+                )
+                _request_auth_token.set(None)
+                _request_headers.set(dict(request.headers))
+
+        response = await call_next(request)
+
+        # Clean up context variables (ContextVars automatically clean up at context boundary,
+        # but explicit cleanup ensures no leakage between requests)
+        _request_auth_token.set(None)
+        _request_headers.set(None)
+
+        return response
+
+    # Run with uvicorn
+    import uvicorn
+
+    logger.info("Standard A2A endpoints: /.well-known/agent.json, /a2a, /agent.json")
+    logger.info("JSON-RPC 2.0 support enabled at /a2a")
+
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

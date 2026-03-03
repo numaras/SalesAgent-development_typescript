@@ -24,6 +24,23 @@ vi.mock("./mediaBuyAdapterCall.js", () => ({
   updateMediaBuyViaAdapter: vi.fn(),
 }));
 
+const mockDbLimit = vi.fn(async () => []);
+const mockDbWhere = vi.fn(() => ({ limit: mockDbLimit }));
+const mockDbFrom = vi.fn(() => ({ where: mockDbWhere }));
+const mockDbSelect = vi.fn(() => ({ from: mockDbFrom }));
+const mockDbInsertValues = vi.fn(async () => undefined);
+const mockDbInsert = vi.fn(() => ({ values: mockDbInsertValues }));
+const mockDbUpdateWhere = vi.fn(async () => undefined);
+const mockDbUpdateSet = vi.fn(() => ({ where: mockDbUpdateWhere }));
+const mockDbUpdate = vi.fn(() => ({ set: mockDbUpdateSet }));
+vi.mock("../db/client.js", () => ({
+  db: {
+    select: (...args: unknown[]) => mockDbSelect(...args),
+    insert: (...args: unknown[]) => mockDbInsert(...args),
+    update: (...args: unknown[]) => mockDbUpdate(...args),
+  },
+}));
+
 import { lookupMediaBuy } from "./mediaBuyLookup.js";
 import { updateMediaBuy } from "./mediaBuyUpdateService.js";
 import { updateMediaBuyViaAdapter } from "./mediaBuyAdapterCall.js";

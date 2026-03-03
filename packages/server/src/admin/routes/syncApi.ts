@@ -278,7 +278,7 @@ const syncApiRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       since: since.toISOString(),
     });
   });
-  // ── Orders sync (stub — GAM client not migrated) ──────────────────────────
+  // ── Orders sync (queued; processed by BullMQ GAM sync worker) ─────────────
   fastify.post("/tenant/:id/orders/sync", async (request, reply) => {
     if (!(await requireSyncApiKey(request, reply))) return;
     const { id: tenantId } = request.params as { id: string };
@@ -303,7 +303,7 @@ const syncApiRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       tenantId,
       adapterType: "google_ad_manager",
       syncType: "orders",
-      status: "running",
+      status: "pending",
       startedAt: new Date(),
       triggeredBy: "api",
       triggeredById: "tenant_management_api",

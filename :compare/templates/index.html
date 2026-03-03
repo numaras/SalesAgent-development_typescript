@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}Accounts - Sales Agent Admin{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2>Accounts</h2>
+        <div>
+            {% if session.role == 'super_admin' %}
+            <a href="{{ script_name }}/settings" class="btn btn-secondary">Settings</a>
+            {% endif %}
+            <a href="{{ script_name }}/create_tenant" class="btn">Create New Account</a>
+        </div>
+    </div>
+
+    {% if tenants %}
+    <!-- Filter Controls -->
+    <div style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 4px;">
+        <form method="get" action="{{ script_name }}/" style="display: flex; gap: 2rem; align-items: center; flex-wrap: wrap;">
+            <div>
+                <label style="font-weight: bold; margin-right: 0.5rem;">Configuration:</label>
+                <select name="configured" style="padding: 0.25rem 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="all" {% if config_filter == 'all' %}selected{% endif %}>All</option>
+                    <option value="configured" {% if config_filter == 'configured' %}selected{% endif %}>Configured</option>
+                    <option value="not-configured" {% if config_filter == 'not-configured' %}selected{% endif %}>Not Configured</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-weight: bold; margin-right: 0.5rem;">Activity:</label>
+                <select name="activity" style="padding: 0.25rem 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="all" {% if activity_filter == 'all' %}selected{% endif %}>All</option>
+                    <option value="has-activity" {% if activity_filter == 'has-activity' %}selected{% endif %}>Has Activity</option>
+                    <option value="no-activity" {% if activity_filter == 'no-activity' %}selected{% endif %}>No Activity</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-small" style="padding: 0.25rem 1rem;">Apply Filters</button>
+            <div style="margin-left: auto; color: #666;">
+                Showing: <strong>{{ tenants|length }}</strong> of {{ total_tenants }} accounts
+                {% if total_pages > 1 %}
+                (page {{ page }} of {{ total_pages }})
+                {% endif %}
+            </div>
+        </form>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Tenant Access</th>
+                <th>Configuration</th>
+                <th>Setup Status</th>
+                <th>Activity</th>
+                <th>Ad Server</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for tenant in tenants %}
+            <tr>
+                <td><strong>{{ tenant.name }}</strong></td>
+                <td>
+                    {% if tenant.virtual_host %}
+                    <code>{{ tenant.virtual_host }}</code>
+                    <br><small style="color: #666;">https://{{ tenant.virtual_host }}</small>
+                    <br><small style="color: #999;">(Virtual Host)</small>
+                    {% else %}
+                    <code>{{ tenant.subdomain }}</code>
+                    {% if is_production %}
+                        <br><small style="color: #666;">https://{{ tenant.subdomain }}.{{ sales_agent_domain }}/mcp/</small>
+                        <br><small style="color: #999;">(Tenant Subdomain)</small>
+                    {% else %}
+                        <br><small style="color: #666;">http://localhost:{{ mcp_port }}/mcp/</small>
+                        <br><small style="color: #999;">(use x-adcp-tenant: {{ tenant.subdomain }})</small>
+                    {% endif %}
+                    {% endif %}
+                </td>
+                <td>
+                    {% if tenant.is_configured %}
+                    <span class="status status-active">✓ Configured</span>
+                    {% else %}
+                    <span class="status status-inactive">⚠ Pending</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if tenant.setup_status %}
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <div style="flex: 1; min-width: 120px;">
+                            <div style="background: #e9ecef; height: 20px; border-radius: 10px; overflow: hidden;">
+                                <div style="background: {% if tenant.setup_status.progress_percent == 100 %}#28a745{% elif tenant.setup_status.progress_percent >= 60 %}#ffc107{% else %}#dc3545{% endif %}; height: 100%; width: {{ tenant.setup_status.progress_percent }}%; transition: width 0.3s;"></div>
+                            </div>
+                        </div>
+                        <div style="min-width: 60px; text-align: right;">
+                            <strong>{{ tenant.setup_status.progress_percent }}%</strong>
+                            <br><small style="color: #666;">{{ tenant.setup_status.completed_count }}/{{ tenant.setup_status.total_count }}</small>
+                        </div>
+                    </div>
+                    {% if tenant.setup_status.ready_for_orders %}
+                    <small style="color: #28a745;">✓ Ready for orders</small>
+                    {% else %}
+                    <small style="color: #dc3545;">{{ tenant.setup_status.critical|selectattr('is_complete', 'equalto', false)|list|length }} critical tasks remaining</small>
+                    {% endif %}
+                    {% else %}
+                    <span style="color: #999;">N/A</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if tenant.has_activity %}
+                    <div style="color: #28a745;">
+                        <strong>{{ tenant.total_buys_count }}</strong> total buys
+                        {% if tenant.recent_buys_count > 0 %}
+                        <br><small style="color: #666;">{{ tenant.recent_buys_count }} in last 30 days</small>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <span style="color: #999;">No activity</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if tenant.ad_server == 'google_ad_manager' %}
+                    <span style="color: #1a73e8;">Google Ad Manager</span>
+                    {% elif tenant.ad_server %}
+                    {{ tenant.ad_server|replace('_', ' ')|title }}
+                    {% else %}
+                    <span style="color: #999;">Not configured</span>
+                    {% endif %}
+                </td>
+                <td>{{ tenant.created_at.strftime('%Y-%m-%d') if tenant.created_at else 'N/A' }}</td>
+                <td>
+                    <a href="{{ script_name }}/tenant/{{ tenant.tenant_id }}" class="btn btn-small">Manage</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Pagination Controls -->
+    {% if total_pages > 1 %}
+    <div style="margin-top: 1.5rem; display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
+        {% if page > 1 %}
+        <a href="?page=1&per_page={{ per_page }}&configured={{ config_filter }}&activity={{ activity_filter }}" class="btn btn-small">First</a>
+        <a href="?page={{ page - 1 }}&per_page={{ per_page }}&configured={{ config_filter }}&activity={{ activity_filter }}" class="btn btn-small">Previous</a>
+        {% endif %}
+
+        <span style="padding: 0 1rem; color: #666;">
+            Page {{ page }} of {{ total_pages }}
+        </span>
+
+        {% if page < total_pages %}
+        <a href="?page={{ page + 1 }}&per_page={{ per_page }}&configured={{ config_filter }}&activity={{ activity_filter }}" class="btn btn-small">Next</a>
+        <a href="?page={{ total_pages }}&per_page={{ per_page }}&configured={{ config_filter }}&activity={{ activity_filter }}" class="btn btn-small">Last</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <p>No tenants found. <a href="{{ script_name }}/create_tenant">Create your first tenant</a>.</p>
+    {% endif %}
+</div>
+{% endblock %}

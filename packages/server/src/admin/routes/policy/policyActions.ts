@@ -6,6 +6,7 @@ import { auditLogs } from "../../../db/schema/auditLogs.js";
 import { contexts } from "../../../db/schema/contexts.js";
 import { tenants } from "../../../db/schema/tenants.js";
 import { workflowSteps } from "../../../db/schema/workflowSteps.js";
+import { requireTenantAccess } from "../../services/authGuard.js";
 import { getAdminSession } from "../../services/sessionService.js";
 
 const defaultProhibitedCategories = [
@@ -36,6 +37,7 @@ function parseTextareaLines(value: unknown): string[] {
 const policyActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.post("/tenant/:id/policy/update", async (request, reply) => {
     const { id } = request.params as { id: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
     const session = getAdminSession(request);
     if (!session.user) return reply.code(401).send({ error: "UNAUTHENTICATED" });
     if (session.role !== "super_admin" && session.role !== "tenant_admin") {
@@ -87,6 +89,7 @@ const policyActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
   fastify.get("/tenant/:id/policy/review/:taskId", async (request, reply) => {
     const { id, taskId } = request.params as { id: string; taskId: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
     const session = getAdminSession(request);
     if (!session.user) return reply.code(401).send({ error: "UNAUTHENTICATED" });
     if (session.role === "viewer") return reply.code(403).send({ error: "Access denied" });
@@ -119,12 +122,15 @@ const policyActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
   fastify.post("/tenant/:id/policy/review/:taskId", async (request, reply) => {
     const { id, taskId } = request.params as { id: string; taskId: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
     const session = getAdminSession(request);
     if (!session.user) return reply.code(401).send({ error: "UNAUTHENTICATED" });
     if (session.role === "viewer") return reply.code(403).send({ error: "Access denied" });
     if (session.role === "tenant_admin" && session.tenant_id !== id) {
       return reply.code(403).send({ error: "Access denied" });
     }
+
+    request.auditOperation = "policy_review";
 
     const body = (request.body ?? {}) as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";

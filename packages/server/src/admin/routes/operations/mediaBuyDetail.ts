@@ -6,6 +6,8 @@ import { contexts } from "../../../db/schema/contexts.js";
 import { mediaBuys, mediaPackages } from "../../../db/schema/mediaBuys.js";
 import { principals } from "../../../db/schema/principals.js";
 import { objectWorkflowMappings, workflowSteps } from "../../../db/schema/workflowSteps.js";
+import { computeReadinessState, extractPackagesTotal } from "../../../services/mediaBuyReadinessService.js";
+import { getMediaBuyDelivery } from "../../../services/deliveryQueryService.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
 
 const mediaBuyDetailRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -38,6 +40,16 @@ const mediaBuyDetailRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
       bid_price: pkg.bidPrice,
       package_config: pkg.packageConfig,
     }));
+
+    const readiness = computeReadinessState(
+      mediaBuy.status,
+      mediaBuy.startDate,
+      mediaBuy.endDate,
+      mediaBuy.startTime,
+      mediaBuy.endTime,
+      extractPackagesTotal(mediaBuy.rawRequest),
+    );
+    const computedState = readiness.state;
 
     // Get workflow steps linked to this media buy (mirrors Python ContextManager.get_object_lifecycle)
     const stepRows = await db
@@ -136,6 +148,29 @@ const mediaBuyDetailRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
       });
     }
 
+    let deliveryMetrics: Record<string, unknown> | null = null;
+    if (["active", "approved", "completed"].includes(mediaBuy.status)) {
+      try {
+        const deliveryResponse = await getMediaBuyDelivery(
+          { tenantId: id, principalId: mediaBuy.principalId },
+          { media_buy_ids: [mbId], status_filter: "all" },
+        );
+        const first = deliveryResponse.media_buy_deliveries[0];
+        if (first) {
+          deliveryMetrics = {
+            impressions: first.totals.impressions,
+            spend: first.totals.spend,
+            clicks: first.totals.clicks ?? null,
+            ctr: first.totals.ctr ?? null,
+            currency: deliveryResponse.currency,
+            by_package: first.by_package,
+          };
+        }
+      } catch {
+        deliveryMetrics = null;
+      }
+    }
+
     return reply.send({
       tenant_id: id,
       media_buy: {
@@ -171,11 +206,9 @@ const mediaBuyDetailRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
       creative_assignments_by_package: creativeAssignmentsByPackage,
       pending_approval_step: pendingApprovalStep,
       status_message: statusMessage,
-      // delivery_metrics: Python adapter (get_media_buy_delivery) not migrated to TS
-      delivery_metrics: null,
-      // computed_state / readiness: MediaBuyReadinessService not migrated to TS
-      computed_state: null,
-      readiness: null,
+      delivery_metrics: deliveryMetrics,
+      computed_state: computedState,
+      readiness,
     });
   });
 };

@@ -6,6 +6,7 @@ import { db } from "../../../db/client.js";
 import { creativeReviews, creatives } from "../../../db/schema/creatives.js";
 import { mediaBuys } from "../../../db/schema/mediaBuys.js";
 import { tenants } from "../../../db/schema/tenants.js";
+import { executeApprovedMediaBuyViaAdapter } from "../../../services/mediaBuyAdapterCall.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
 import { getAdminSession } from "../../services/sessionService.js";
 
@@ -32,9 +33,6 @@ function computeMediaBuyStatusFromFlightDates(startDate: string | null): string 
  * Python: creatives.py L511-582 — iterate CreativeAssignment rows for the
  * just-approved creative, check if every creative in each media buy is now
  * approved, and if so advance the media buy status to active/scheduled.
- *
- * Full adapter execution (GAM/Mock SDK call) is deferred until adapter clients
- * are wired; DB status advancement is implemented here for parity.
  */
 async function triggerMediaBuyApprovalCascade(
   tenantId: string,
@@ -49,7 +47,13 @@ async function triggerMediaBuyApprovalCascade(
     const mediaBuyId = assignment.media_buy_id;
 
     const [mediaBuy] = await db
-      .select({ mediaBuyId: mediaBuys.mediaBuyId, status: mediaBuys.status, startDate: mediaBuys.startDate })
+      .select({
+        mediaBuyId: mediaBuys.mediaBuyId,
+        status: mediaBuys.status,
+        startDate: mediaBuys.startDate,
+        principalId: mediaBuys.principalId,
+        rawRequest: mediaBuys.rawRequest,
+      })
       .from(mediaBuys)
       .where(and(eq(mediaBuys.mediaBuyId, mediaBuyId), eq(mediaBuys.tenantId, tenantId)))
       .limit(1);
@@ -87,6 +91,21 @@ async function triggerMediaBuyApprovalCascade(
           updatedAt: new Date(),
         })
         .where(eq(mediaBuys.mediaBuyId, mediaBuyId));
+
+      const execution = await executeApprovedMediaBuyViaAdapter(
+        { tenantId, principalId: mediaBuy.principalId },
+        mediaBuyId,
+        mediaBuy.rawRequest,
+      );
+      if (!execution.success) {
+        await db
+          .update(mediaBuys)
+          .set({ status: "failed", updatedAt: new Date() })
+          .where(eq(mediaBuys.mediaBuyId, mediaBuyId));
+        throw new Error(
+          `Creative approval cascade adapter execution failed for media buy ${mediaBuyId}: ${execution.error}`,
+        );
+      }
     }
   }
 }

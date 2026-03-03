@@ -27,6 +27,18 @@ vi.mock("../../../db/client.js", () => ({
   },
 }));
 
+const mockGetCustomTargetingValuesByStatement = vi.fn(async () => ({ results: [] }));
+const mockGetService = vi.fn(async () => ({
+  getCustomTargetingValuesByStatement: (...args: unknown[]) =>
+    mockGetCustomTargetingValuesByStatement(...args),
+}));
+const mockBuildGamClient = vi.fn(() => ({
+  getService: (...args: unknown[]) => mockGetService(...args),
+}));
+vi.mock("../../../gam/gamClient.js", () => ({
+  buildGamClient: (...args: unknown[]) => mockBuildGamClient(...args),
+}));
+
 async function createAdminApp(routePlugin: FastifyPluginAsync) {
   const app = await buildApp({ logger: false, registerDefaultRoutes: false });
   await app.register(routePlugin);
@@ -37,6 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   selectLimitQueue.length = 0;
   mockRequireTenantAccess.mockResolvedValue(true);
+  mockGetCustomTargetingValuesByStatement.mockResolvedValue({ results: [] });
 });
 
 describe("Admin GAM inventory validation coverage", () => {
@@ -135,19 +148,24 @@ describe("Admin GAM inventory validation coverage", () => {
     it("GET /api/tenant/:id/targeting/values/:key_id returns 200 on valid request", async () => {
       selectLimitQueue.push(
         [{ tenantId: "tenant-1" }],
-        [{ inventoryId: "key-1", inventoryType: "custom_targeting_key" }],
+        [{ inventoryId: "123", inventoryType: "custom_targeting_key", name: "Audience Key" }],
         [{ gamNetworkCode: "123", gamRefreshToken: "refresh", gamServiceAccountJson: null }],
       );
 
       const app = await createAdminApp(targetingRoute);
       const res = await app.inject({
         method: "GET",
-        url: "/api/tenant/tenant-1/targeting/values/key-1",
+        url: "/api/tenant/tenant-1/targeting/values/123",
       });
       await app.close();
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ values: [], count: 0 });
+      expect(mockBuildGamClient).toHaveBeenCalledOnce();
+      expect(mockGetService).toHaveBeenCalledWith("CustomTargetingService");
+      expect(mockGetCustomTargetingValuesByStatement).toHaveBeenCalledWith({
+        query: "WHERE customTargetingKeyId = 123 LIMIT 1000 OFFSET 0",
+      });
     });
   });
 });

@@ -13,7 +13,18 @@ import {
   gamReportingAdvertiserSummaryRouteSchema,
   gamReportingCountriesRouteSchema,
 } from "../../../routes/schemas/admin/gamReporting/breakdown.schema.js";
+import {
+  getAdUnitBreakdown,
+  getAdvertiserSummary,
+  getCountryBreakdown,
+  type ReportingDateRange,
+} from "../../services/gamReportingService.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
+import {
+  fetchLiveGamAdUnitBreakdown,
+  fetchLiveGamAdvertiserSummary,
+  fetchLiveGamCountryBreakdown,
+} from "../../../services/gamLiveReportingService.js";
 
 const DATE_RANGES = ["lifetime", "this_month", "today"] as const;
 const NUMERIC_ID = /^\d+$/;
@@ -70,12 +81,21 @@ const breakdownRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     return true;
   }
 
-  function parseQuery(request: FastifyRequest) {
+  function parseQuery(request: FastifyRequest):
+    | {
+        dateRange: typeof DATE_RANGES[number];
+        advertiserId: string | undefined;
+        orderId: string | undefined;
+        lineItemId: string | undefined;
+        timezone: string;
+      }
+    | { error: string } {
     const q = (request.query ?? {}) as Record<string, string | undefined>;
-    const dateRange = q.date_range;
-    if (!dateRange || !DATE_RANGES.includes(dateRange as typeof DATE_RANGES[number])) {
+    const dateRangeRaw = q.date_range;
+    if (!dateRangeRaw || !DATE_RANGES.includes(dateRangeRaw as typeof DATE_RANGES[number])) {
       return { error: "Invalid or missing date_range. Must be one of: lifetime, this_month, today" };
     }
+    const dateRange = dateRangeRaw as typeof DATE_RANGES[number];
     const advertiserId = q.advertiser_id;
     if (advertiserId && !validateNumericId(advertiserId)) return { error: "Invalid advertiser_id format" };
     const orderId = q.order_id;
@@ -99,8 +119,27 @@ const breakdownRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     try {
       if (!ensureGamClient(ctx, reply)) return;
-      // GAM reporting service not yet migrated to TypeScript.
-      return reply.send({ success: true, data: [] });
+      let data = await getCountryBreakdown({
+        tenantId,
+        dateRange: parsed.dateRange,
+        advertiserId: parsed.advertiserId,
+        orderId: parsed.orderId,
+        lineItemId: parsed.lineItemId,
+        timezone: parsed.timezone,
+      });
+      try {
+        const live = await fetchLiveGamCountryBreakdown({
+          tenantId,
+          dateRange: parsed.dateRange,
+          advertiserId: parsed.advertiserId,
+          orderId: parsed.orderId,
+          lineItemId: parsed.lineItemId,
+        });
+        if (live.length > 0) data = live;
+      } catch {
+        // Fall back to cached DB reporting data.
+      }
+      return reply.send({ success: true, data });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(500).send({ error: `Failed to get country breakdown: ${message}` });
@@ -115,8 +154,27 @@ const breakdownRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     if ("error" in parsed) return reply.code(400).send({ error: parsed.error });
     try {
       if (!ensureGamClient(ctx, reply)) return;
-      // GAM reporting service not yet migrated to TypeScript.
-      return reply.send({ success: true, data: [] });
+      let data = await getAdUnitBreakdown({
+        tenantId,
+        dateRange: parsed.dateRange,
+        advertiserId: parsed.advertiserId,
+        orderId: parsed.orderId,
+        lineItemId: parsed.lineItemId,
+        timezone: parsed.timezone,
+      });
+      try {
+        const live = await fetchLiveGamAdUnitBreakdown({
+          tenantId,
+          dateRange: parsed.dateRange,
+          advertiserId: parsed.advertiserId,
+          orderId: parsed.orderId,
+          lineItemId: parsed.lineItemId,
+        });
+        if (live.length > 0) data = live;
+      } catch {
+        // Fall back to cached DB reporting data.
+      }
+      return reply.send({ success: true, data });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(500).send({ error: `Failed to get ad unit breakdown: ${message}` });
@@ -132,7 +190,7 @@ const breakdownRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     if (!ctx) return;
     if (!validateNumericId(advertiserId)) return reply.code(400).send({ error: "Invalid advertiser_id format" });
     const q = request.query as { date_range?: string; timezone?: string };
-    const dateRange = q.date_range;
+    const dateRange = q.date_range as ReportingDateRange;
     if (!dateRange || !DATE_RANGES.includes(dateRange as typeof DATE_RANGES[number])) {
       return reply.code(400).send({
         error: "Invalid or missing date_range. Must be one of: lifetime, this_month, today",
@@ -146,8 +204,23 @@ const breakdownRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }
     try {
       if (!ensureGamClient(ctx, reply)) return;
-      // GAM reporting service not yet migrated to TypeScript.
-      return reply.send({ success: true, data: {} });
+      let data = await getAdvertiserSummary({
+        tenantId,
+        advertiserId,
+        dateRange,
+        timezone,
+      });
+      try {
+        const live = await fetchLiveGamAdvertiserSummary({
+          tenantId,
+          advertiserId,
+          dateRange,
+        });
+        data = live;
+      } catch {
+        // Fall back to cached DB reporting data.
+      }
+      return reply.send({ success: true, data });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(500).send({ error: `Failed to get advertiser summary: ${message}` });

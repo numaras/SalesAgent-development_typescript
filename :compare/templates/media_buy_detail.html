@@ -1,0 +1,886 @@
+{% extends "base.html" %}
+
+{% block title %}Media Buy {{ media_buy.media_buy_id }} - {{ tenant_id }}{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1>Media Buy Details</h1>
+    <div>
+        <a href="{{ url_for('tenants.dashboard', tenant_id=tenant_id) }}" class="btn btn-secondary">← Back to Dashboard</a>
+    </div>
+</div>
+
+<!-- Approval Alert -->
+{% if pending_approval_step %}
+<div class="alert alert-warning">
+    <div style="display: flex; justify-content: space-between; align-items: start;">
+        <div>
+            <strong>⚠️ Manual Approval Required</strong>
+            <p style="margin: 0.5rem 0 0 0;">{{ status_message.message if status_message else "This media buy needs approval before it can proceed." }}</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <form method="POST" action="{{ url_for('operations.approve_media_buy', tenant_id=tenant_id, media_buy_id=media_buy.media_buy_id) }}" style="display: inline;" onsubmit="return handleApprovalSubmit(event, this)">
+                <input type="hidden" name="action" value="approve">
+                <button type="submit" class="btn btn-success btn-sm" id="approveBtn">
+                    ✅ Approve
+                </button>
+            </form>
+            <button type="button" class="btn btn-danger btn-sm" onclick="showRejectModal()">
+                ❌ Reject
+            </button>
+        </div>
+    </div>
+</div>
+{% elif status_message and status_message.type == 'pending_other' %}
+<div class="alert alert-info">
+    <strong>ℹ️ Pending</strong>
+    <p style="margin: 0.5rem 0 0 0;">{{ status_message.message }}</p>
+</div>
+{% endif %}
+
+<div class="custom-card">
+    <h2>Media Buy Information</h2>
+    <div class="detail-rows">
+        <div class="detail-row">
+            <span class="label">Media Buy ID:</span>
+            <span class="value">{{ media_buy.media_buy_id }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="label">Status:</span>
+            <span class="value">
+                <span class="status status-{{ computed_state }}">{{ computed_state|upper|replace('_', ' ') }}</span>
+                {% if pending_approval_step %}
+                <span class="status-badge">Awaiting Approval</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="detail-row">
+            <span class="label">Budget:</span>
+            <span class="value">${{ "%.2f"|format(media_buy.budget or 0) }} {{ media_buy.currency or 'USD' }}</span>
+        </div>
+        {% if media_buy.buyer_ref %}
+        <div class="detail-row">
+            <span class="label">Buyer Reference:</span>
+            <span class="value">{{ media_buy.buyer_ref }}</span>
+        </div>
+        {% endif %}
+        {% if media_buy.start_date and media_buy.end_date %}
+        <div class="detail-row">
+            <span class="label">Flight Dates:</span>
+            <span class="value">
+                {{ media_buy.start_date.strftime('%Y-%m-%d') }} to {{ media_buy.end_date.strftime('%Y-%m-%d') }}
+            </span>
+        </div>
+        {% endif %}
+        {% if media_buy.start_time and media_buy.end_time %}
+        <div class="detail-row">
+            <span class="label">Schedule Time:</span>
+            <span class="value">
+                {{ media_buy.start_time.strftime('%Y-%m-%d %H:%M:%S') if media_buy.start_time else 'Not set' }} to
+                {{ media_buy.end_time.strftime('%Y-%m-%d %H:%M:%S') if media_buy.end_time else 'Not set' }}
+            </span>
+        </div>
+        {% endif %}
+        <div class="detail-row">
+            <span class="label">Created:</span>
+            <span class="value">
+                {% if media_buy.created_at %}
+                    {{ media_buy.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                {% else %}
+                    Unknown
+                {% endif %}
+            </span>
+        </div>
+    </div>
+</div>
+
+{% if delivery_metrics %}
+<div class="custom-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;">📊 Delivery Metrics</h2>
+        {% if media_buy.raw_request and media_buy.raw_request.get('reporting_webhook') %}
+        <form method="POST" action="{{ url_for('operations.trigger_delivery_webhook', tenant_id=tenant_id, media_buy_id=media_buy.media_buy_id) }}" style="margin: 0;">
+            <button type="submit" class="btn btn-sm btn-secondary" title="Trigger delivery report webhook now" onclick="return confirm('Send delivery report webhook now?');">
+                🔔 Test Webhook
+            </button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="detail-rows">
+        <div class="detail-row">
+            <span class="label">Impressions:</span>
+            <span class="value">{{ "{:,}".format(delivery_metrics.impressions|int) }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="label">Spend:</span>
+            <span class="value">{{ delivery_metrics.currency }} {{ "{:,.2f}".format(delivery_metrics.spend) }}</span>
+        </div>
+        {% if delivery_metrics.clicks %}
+        <div class="detail-row">
+            <span class="label">Clicks:</span>
+            <span class="value">{{ "{:,}".format(delivery_metrics.clicks|int) }}</span>
+        </div>
+        {% endif %}
+        {% if delivery_metrics.ctr %}
+        <div class="detail-row">
+            <span class="label">CTR:</span>
+            <span class="value">{{ "{:.2f}".format(delivery_metrics.ctr) }}%</span>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if delivery_metrics.by_package %}
+    <div style="margin-top: 1rem;">
+        <h3 style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">By Package</h3>
+        <div style="display: grid; gap: 0.5rem;">
+        {% for pkg in delivery_metrics.by_package %}
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 0.75rem; background: #f9f9f9;">
+            <div style="font-weight: 500; margin-bottom: 0.5rem;">{{ pkg.package_id }}</div>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.85rem;">
+                <div>
+                    <span style="color: #666;">Impressions:</span>
+                    <strong>{{ "{:,}".format(pkg.impressions|int) }}</strong>
+                </div>
+                <div>
+                    <span style="color: #666;">Spend:</span>
+                    <strong>{{ "{:,.2f}".format(pkg.spend) }}</strong>
+                </div>
+                {% if pkg.clicks %}
+                <div>
+                    <span style="color: #666;">Clicks:</span>
+                    <strong>{{ "{:,}".format(pkg.clicks|int) }}</strong>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e0e0e0; font-size: 0.85rem; color: #666;">
+        <em>Metrics fetched from {{ media_buy.adapter_type|default('ad server') }} in real-time</em>
+    </div>
+</div>
+{% elif media_buy.status in ['active', 'approved', 'completed'] %}
+<div class="custom-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;">📊 Delivery Metrics</h2>
+        {% if media_buy.raw_request and media_buy.raw_request.get('reporting_webhook') %}
+        <form method="POST" action="{{ url_for('operations.trigger_delivery_webhook', tenant_id=tenant_id, media_buy_id=media_buy.media_buy_id) }}" style="margin: 0;">
+            <button type="submit" class="btn btn-sm btn-secondary" title="Trigger delivery report webhook now" onclick="return confirm('Send delivery report webhook now?');">
+                🔔 Test Webhook
+            </button>
+        </form>
+        {% endif %}
+    </div>
+    <p style="color: #666; margin: 0;">
+        <em>Delivery metrics are being loaded from the ad server...</em>
+    </p>
+</div>
+{% endif %}
+
+{% if principal %}
+<div class="custom-card">
+    <h2>Advertiser Information</h2>
+    <div class="detail-rows">
+        <div class="detail-row">
+            <span class="label">Advertiser:</span>
+            <span class="value">{{ principal.name }}</span>
+        </div>
+        <div class="detail-row">
+            <span class="label">Principal ID:</span>
+            <span class="value">{{ principal.principal_id }}</span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Packages -->
+<div class="custom-card">
+    <h2>Packages</h2>
+    {% if packages %}
+        <div style="display: grid; gap: 1rem;">
+        {% for item in packages %}
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 1rem; background: #f9f9f9;">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                <strong style="font-size: 1.1em;">📦 {{ item.package.package_id }}</strong>
+                {% if item.product %}
+                <span style="color: #666; font-size: 0.9em;">Product: {{ item.product.name }}</span>
+                {% endif %}
+            </div>
+            <div class="detail-rows" style="margin-top: 0.5rem;">
+                {# Access fields from package_config JSONB #}
+                {% if item.package.package_config.get('name') %}
+                <div class="detail-row">
+                    <span class="label">Package Name:</span>
+                    <span class="value">{{ item.package.package_config.name }}</span>
+                </div>
+                {% endif %}
+                {% if item.package.package_config.get('budget') %}
+                <div class="detail-row">
+                    <span class="label">Budget:</span>
+                    <span class="value">
+                        {# Handle both Budget object (dict) and legacy float #}
+                        {% if item.package.package_config.budget is mapping %}
+                            ${{ "%.2f"|format(item.package.package_config.budget.total) }}
+                        {% else %}
+                            ${{ "%.2f"|format(item.package.package_config.budget) }}
+                        {% endif %}
+                    </span>
+                </div>
+                {% endif %}
+                {% if item.product %}
+                <div class="detail-row">
+                    <span class="label">Product ID:</span>
+                    <span class="value">{{ item.product.product_id }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="label">Product Name:</span>
+                    <span class="value">{{ item.product.name }}</span>
+                </div>
+                {# Show pricing information - from package_config if available, else from product #}
+                {% if item.package.package_config.get('pricing_info') %}
+                    {% set pricing = item.package.package_config.pricing_info %}
+                    <div class="detail-row">
+                        <span class="label">Pricing Model:</span>
+                        <span class="value">
+                            <span style="background: #e3f2fd; padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 600; text-transform: uppercase;">
+                                {{ pricing.pricing_model|upper|replace('_', ' ') }}
+                            </span>
+                        </span>
+                    </div>
+                    {% if pricing.rate or pricing.bid_price %}
+                    <div class="detail-row">
+                        <span class="label">Rate:</span>
+                        <span class="value">
+                            {% if pricing.is_fixed %}
+                                ${{ "%.2f"|format(pricing.rate) }} {{ pricing.currency }} (Fixed)
+                            {% else %}
+                                ${{ "%.2f"|format(pricing.bid_price or pricing.rate or 0) }} {{ pricing.currency }} (Bid Price)
+                            {% endif %}
+                        </span>
+                    </div>
+                    {% endif %}
+                    {% if pricing.pricing_model == 'flat_rate' and item.package.package_config.get('impressions') %}
+                    <div class="detail-row">
+                        <span class="label">Impressions:</span>
+                        <span class="value">{{ "{:,}".format(item.package.package_config.impressions|int) }}</span>
+                    </div>
+                    {% endif %}
+                {% elif item.product.pricing_options and item.product.pricing_options|length > 0 %}
+                    {# Fallback: Show first pricing option from product (for old media buys) #}
+                    {% set first_option = item.product.pricing_options[0] %}
+                    <div class="detail-row">
+                        <span class="label">Pricing Model:</span>
+                        <span class="value">
+                            <span style="background: #e3f2fd; padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: 600; text-transform: uppercase;">
+                                {{ first_option.pricing_model|upper|replace('_', ' ') }}
+                            </span>
+                        </span>
+                    </div>
+                    {% if first_option.rate %}
+                    <div class="detail-row">
+                        <span class="label">Rate:</span>
+                        <span class="value">
+                            ${{ "%.2f"|format(first_option.rate) }} {{ first_option.currency }}
+                            {% if first_option.is_fixed %}(Fixed){% else %}(Floor){% endif %}
+                        </span>
+                    </div>
+                    {% endif %}
+                {% endif %}
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+        </div>
+    {% else %}
+        <p class="no-data">No packages configured for this media buy.</p>
+    {% endif %}
+</div>
+
+<!-- Creative Assignments -->
+<div class="custom-card">
+    <h2>Creative Assignments</h2>
+    {% if creative_assignments_by_package %}
+        {% for package_id, assignments in creative_assignments_by_package.items() %}
+        <div class="package-section">
+            <h3 class="package-header">📦 Package: {{ package_id }}</h3>
+            <div class="creatives-grid">
+                {% for item in assignments %}
+                <a href="{{ url_for('creatives.review_creatives', tenant_id=tenant_id) }}?creative_id={{ item.creative.creative_id }}" class="creative-card-link">
+                    <div class="creative-card">
+                        <div class="creative-header">
+                            <strong>{{ item.creative.name }}</strong>
+                            <span class="status status-{{ item.creative.status }}">{{ item.creative.status|upper }}</span>
+                        </div>
+                        <div class="creative-details">
+                            <div class="creative-detail-row">
+                                <span class="label">Creative ID:</span>
+                                <span class="value">{{ item.creative.creative_id }}</span>
+                            </div>
+                            <div class="creative-detail-row">
+                                <span class="label">Format:</span>
+                                <span class="value">{{ item.creative.format or 'N/A' }}</span>
+                            </div>
+                            <div class="creative-detail-row">
+                                <span class="label">Weight:</span>
+                                <span class="value">{{ item.assignment.weight }}%</span>
+                            </div>
+                            <div class="creative-detail-row">
+                                <span class="label">Assigned:</span>
+                                <span class="value">{{ item.assignment.created_at.strftime('%Y-%m-%d %H:%M') if item.assignment.created_at else 'N/A' }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <p class="no-data">No creatives assigned to this media buy yet.</p>
+    {% endif %}
+</div>
+
+<!-- Workflow History -->
+{% if workflow_steps %}
+<div class="custom-card">
+    <h2>Workflow History</h2>
+    <div class="workflow-timeline">
+        {% for step in workflow_steps %}
+        <div class="timeline-item">
+            <div class="timeline-marker status-{{ step.status }}"></div>
+            <div class="timeline-content">
+                <div class="timeline-header">
+                    <strong>{{ step.tool_name or step.action|title }}</strong>
+                    <span class="timeline-status status status-{{ step.status }}">{{ step.status|upper }}</span>
+                </div>
+                <div class="timeline-meta">
+                    <span>{{ step.created_at }}</span>
+                    {% if step.owner %}
+                    <span>Owner: {{ step.owner }}</span>
+                    {% endif %}
+                </div>
+                {% if step.error_message %}
+                <div class="timeline-error">{{ step.error_message }}</div>
+                {% endif %}
+                {% if step.comments %}
+                <div class="timeline-comments">
+                    {% for comment in step.comments %}
+                    <div class="comment">
+                        <strong>{{ comment.user }}:</strong> {{ comment.comment }}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Reject Modal -->
+<div id="rejectModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Reject Media Buy</h2>
+            <button type="button" class="modal-close" onclick="hideRejectModal()">&times;</button>
+        </div>
+        <form method="POST" action="{{ url_for('operations.approve_media_buy', tenant_id=tenant_id, media_buy_id=media_buy.media_buy_id) }}">
+            <input type="hidden" name="action" value="reject">
+            <div class="modal-body">
+                <label for="reason">Reason for rejection:</label>
+                <textarea id="reason" name="reason" rows="4" style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;" required></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideRejectModal()">Cancel</button>
+                <button type="submit" class="btn btn-danger">Reject Media Buy</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.custom-card {
+    background: white;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.custom-card h2 {
+    margin-bottom: 1rem;
+    color: #2c3e50;
+}
+
+.detail-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.detail-row {
+    display: flex;
+    align-items: center;
+}
+
+.detail-row .label {
+    font-weight: 600;
+    color: #6c757d;
+    width: 150px;
+    flex-shrink: 0;
+}
+
+.detail-row .value {
+    flex: 1;
+}
+
+.status {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-pending, .status-pending_approval, .status-requires_approval {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-active {
+    background-color: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-completed, .status-approved {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-failed, .status-rejected {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.status-badge {
+    margin-left: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background-color: #ff6b6b;
+    color: white;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* Alerts */
+.alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    border-left: 4px solid;
+}
+
+.alert-warning {
+    background-color: #fff3cd;
+    border-color: #ffc107;
+    color: #856404;
+}
+
+.alert-info {
+    background-color: #d1ecf1;
+    border-color: #17a2b8;
+    color: #0c5460;
+}
+
+/* Workflow Timeline */
+.workflow-timeline {
+    position: relative;
+    padding-left: 2rem;
+}
+
+.timeline-item {
+    position: relative;
+    padding-bottom: 2rem;
+}
+
+.timeline-item:last-child {
+    padding-bottom: 0;
+}
+
+.timeline-marker {
+    position: absolute;
+    left: -2rem;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    background-color: #6c757d;
+    border: 3px solid white;
+    box-shadow: 0 0 0 2px #6c757d;
+}
+
+.timeline-marker.status-completed, .timeline-marker.status-approved {
+    background-color: #28a745;
+    box-shadow: 0 0 0 2px #28a745;
+}
+
+.timeline-marker.status-requires_approval, .timeline-marker.status-pending_approval {
+    background-color: #ffc107;
+    box-shadow: 0 0 0 2px #ffc107;
+}
+
+.timeline-marker.status-failed, .timeline-marker.status-rejected {
+    background-color: #dc3545;
+    box-shadow: 0 0 0 2px #dc3545;
+}
+
+.timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -1.5rem;
+    top: 1rem;
+    bottom: -1rem;
+    width: 2px;
+    background-color: #dee2e6;
+}
+
+.timeline-item:last-child::before {
+    display: none;
+}
+
+.timeline-content {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 6px;
+}
+
+.timeline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.timeline-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+}
+
+.timeline-meta span {
+    margin-right: 1rem;
+}
+
+.timeline-error {
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+}
+
+.timeline-comments {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #dee2e6;
+}
+
+.comment {
+    font-size: 0.875rem;
+    color: #495057;
+    margin-bottom: 0.25rem;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.show {
+    display: flex;
+}
+
+.modal-content {
+    background-color: white;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #6c757d;
+}
+
+.modal-close:hover {
+    color: #343a40;
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #dee2e6;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+/* Button Styles */
+.btn-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+.btn-success {
+    background-color: #28a745;
+    border-color: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background-color: #218838;
+    border-color: #1e7e34;
+}
+
+.btn-danger {
+    background-color: #dc3545;
+    border-color: #dc3545;
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #c82333;
+    border-color: #bd2130;
+}
+
+/* Creative Assignments */
+.package-section {
+    margin-bottom: 2rem;
+}
+
+.package-section:last-child {
+    margin-bottom: 0;
+}
+
+.package-header {
+    color: #495057;
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.creatives-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+}
+
+.creative-card-link {
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+
+.creative-card-link:hover .creative-card {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    border-color: #0066cc;
+}
+
+.creative-card {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 1rem;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.creative-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.creative-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.creative-detail-row {
+    display: flex;
+    font-size: 0.875rem;
+}
+
+.creative-detail-row .label {
+    font-weight: 600;
+    color: #6c757d;
+    width: 80px;
+    flex-shrink: 0;
+}
+
+.creative-detail-row .value {
+    flex: 1;
+    color: #495057;
+}
+
+.no-data {
+    color: #6c757d;
+    font-style: italic;
+    text-align: center;
+    padding: 2rem;
+}
+</style>
+
+<script>
+function showRejectModal() {
+    document.getElementById('rejectModal').classList.add('show');
+}
+
+function hideRejectModal() {
+    document.getElementById('rejectModal').classList.remove('show');
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('rejectModal');
+    if (event.target === modal) {
+        hideRejectModal();
+    }
+}
+
+// Handle approval submission with loading feedback
+function handleApprovalSubmit(event, form) {
+    if (!confirm('Are you sure you want to approve this media buy? This will create orders and line items in the ad server.')) {
+        event.preventDefault();
+        return false;
+    }
+
+    // Show loading overlay
+    showLoadingOverlay();
+
+    // Let form submit normally
+    return true;
+}
+
+function showLoadingOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'approvalLoadingOverlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        color: white;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    `;
+
+    overlay.innerHTML = `
+        <div style="text-align: center; max-width: 500px; padding: 2rem;">
+            <div class="spinner" style="margin: 0 auto 2rem auto;"></div>
+            <h2 style="margin-bottom: 1rem; font-size: 1.5rem;">Processing Approval...</h2>
+            <p style="color: #ccc; margin-bottom: 1.5rem;">This may take 30-60 seconds</p>
+            <div id="progressSteps" style="text-align: left; background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 8px;">
+                <div class="progress-step">⏳ Creating order in ad server...</div>
+                <div class="progress-step" style="opacity: 0.5;">⏳ Creating line items...</div>
+                <div class="progress-step" style="opacity: 0.5;">⏳ Uploading creatives...</div>
+                <div class="progress-step" style="opacity: 0.5;">⏳ Approving order...</div>
+                <div class="progress-step" style="opacity: 0.5;">⏳ Finalizing...</div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Simulate progress (since we can't get real progress from server side)
+    let step = 0;
+    const steps = overlay.querySelectorAll('.progress-step');
+    const progressInterval = setInterval(() => {
+        if (step < steps.length) {
+            steps[step].style.opacity = '1';
+            if (step > 0) {
+                steps[step - 1].innerHTML = steps[step - 1].innerHTML.replace('⏳', '✅');
+            }
+            step++;
+        }
+    }, 8000); // Progress every 8 seconds (5 steps * 8 = 40 seconds total)
+
+    // Store interval ID so we can clear it if needed
+    overlay.dataset.intervalId = progressInterval;
+}
+
+// Add spinner CSS
+const style = document.createElement('style');
+style.textContent = `
+    .spinner {
+        width: 50px;
+        height: 50px;
+        border: 5px solid rgba(255, 255, 255, 0.3);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .progress-step {
+        padding: 0.5rem 0;
+        font-size: 0.95rem;
+        transition: opacity 0.3s ease;
+    }
+`;
+document.head.appendChild(style);
+</script>
+{% endblock %}

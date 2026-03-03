@@ -7,6 +7,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "../db/client.js";
+import { gamLineItems } from "../db/schema/gamInventory.js";
 import { mediaBuys, mediaPackages, type MediaBuy } from "../db/schema/mediaBuys.js";
 import type {
   GetMediaBuyDeliveryRequest,
@@ -81,6 +82,36 @@ function toISO(d: Date): string {
   return d.toISOString();
 }
 
+function extractGamOrderId(mediaBuyId: string): string | null {
+  if (!mediaBuyId.startsWith("gam_order_")) return null;
+  return mediaBuyId.replace(/^gam_order_/, "");
+}
+
+function normalizeGamMoneyMicros(value: number | null | undefined): number {
+  if (value == null) return 0;
+  return value / 1_000_000;
+}
+
+function estimateLineItemSpend(
+  costType: string | null,
+  costPerUnitMicros: number | null,
+  impressions: number,
+  clicks: number,
+  deliveryData: Record<string, unknown> | null,
+): number {
+  const rate = normalizeGamMoneyMicros(costPerUnitMicros);
+  if (rate <= 0) return 0;
+
+  if (costType === "CPM") return (impressions / 1000) * rate;
+  if (costType === "CPC") return clicks * rate;
+
+  const deliveredUnits = typeof deliveryData?.["unitsDelivered"] === "number"
+    ? deliveryData["unitsDelivered"]
+    : 0;
+  if (deliveredUnits > 0) return deliveredUnits * rate;
+  return 0;
+}
+
 /** Structured error response shape matching Python adcp.types.Error. */
 type DeliveryError = { code: string; message: string };
 
@@ -128,12 +159,52 @@ async function fetchPackagePricingMap(
   return result;
 }
 
+async function fetchGamOrderMetricsMap(
+  tenantId: string,
+  mediaBuyIds: string[],
+): Promise<Map<string, { impressions: number; clicks: number; spend: number }>> {
+  const orderIds = mediaBuyIds
+    .map((id) => extractGamOrderId(id))
+    .filter((id): id is string => Boolean(id));
+  if (orderIds.length === 0) return new Map();
+
+  const rows = await db
+    .select({
+      orderId: gamLineItems.orderId,
+      statsImpressions: gamLineItems.statsImpressions,
+      statsClicks: gamLineItems.statsClicks,
+      costType: gamLineItems.costType,
+      costPerUnit: gamLineItems.costPerUnit,
+      deliveryData: gamLineItems.deliveryData,
+    })
+    .from(gamLineItems)
+    .where(and(eq(gamLineItems.tenantId, tenantId), inArray(gamLineItems.orderId, orderIds)));
+
+  const byOrder = new Map<string, { impressions: number; clicks: number; spend: number }>();
+  for (const row of rows) {
+    const existing = byOrder.get(row.orderId) ?? { impressions: 0, clicks: 0, spend: 0 };
+    const impressions = row.statsImpressions ?? 0;
+    const clicks = row.statsClicks ?? 0;
+    existing.impressions += impressions;
+    existing.clicks += clicks;
+    existing.spend += estimateLineItemSpend(
+      row.costType,
+      row.costPerUnit,
+      impressions,
+      clicks,
+      row.deliveryData ?? null,
+    );
+    byOrder.set(row.orderId, existing);
+  }
+
+  return byOrder;
+}
+
 /**
  * Build per-package delivery entries from raw_request.packages.
  * Python equivalent: _get_media_buy_delivery_impl L282-336.
  *
- * Metrics are divided equally because adapter integration is deferred;
- * pricing_model/rate/currency are populated from MediaPackage.package_config.
+ * Pricing_model/rate/currency are populated from MediaPackage.package_config.
  */
 function buildPackageDeliveries(
   buy: MediaBuy,
@@ -197,8 +268,7 @@ function buildPackageDeliveries(
  * DB query is tenant+principal scoped; status filter normalises
  * pending_activation→ready; date range defaults to last 30 days.
  *
- * Adapter integration (real per-package metrics) is deferred;
- * package-level delivery is built from raw_request.packages.
+ * Package-level delivery is built from raw_request.packages.
  */
 export async function getMediaBuyDelivery(
   ctx: DeliveryQueryContext,
@@ -275,6 +345,7 @@ export async function getMediaBuyDelivery(
   // Python equivalent: _get_media_buy_delivery_impl L270-279.
   const mediaBuyIds = rows.map((r) => r.mediaBuyId);
   const allPricingMaps = await fetchPackagePricingMap(mediaBuyIds);
+  const orderMetricsMap = await fetchGamOrderMetricsMap(ctx.tenantId, mediaBuyIds);
 
   const deliveries: MediaBuyDeliveryData[] = [];
   let totalImpressions = 0;
@@ -291,9 +362,10 @@ export async function getMediaBuyDelivery(
     const status = statusFromDates(referenceDate, startDate, endDate);
     if (!statusFilter.includes(status)) continue;
 
-    // Adapter integration is deferred — totals remain zeroed until real adapter is wired.
-    const buyImpressions = 0;
-    const buySpend = 0;
+    const gamOrderId = extractGamOrderId(buy.mediaBuyId);
+    const orderMetrics = gamOrderId ? orderMetricsMap.get(gamOrderId) : null;
+    const buyImpressions = orderMetrics?.impressions ?? 0;
+    const buySpend = orderMetrics?.spend ?? 0;
 
     const totals: DeliveryTotals = {
       impressions: buyImpressions,

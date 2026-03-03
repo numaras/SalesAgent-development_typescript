@@ -1,7 +1,7 @@
 /**
  * GAM reporting per-principal. Parity with _legacy gam_reporting_api:
  * GET /api/tenant/:id/principals/:p_id/gam/reporting, GET .../principals/:p_id/gam/reporting/summary
- * GAM reporting service not migrated; returns stub response after validating GAM config.
+ * Uses cached synced GAM DB tables (orders + line items) to build reporting responses.
  */
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
@@ -13,7 +13,12 @@ import {
   principalGamReportingRouteSchema,
   principalGamReportingSummaryRouteSchema,
 } from "../../../routes/schemas/admin/gamReporting/principal.schema.js";
+import {
+  getAdvertiserSummary,
+  getBaseReportingRows,
+} from "../../services/gamReportingService.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
+import { fetchLiveGamBaseReportingRows } from "../../../services/gamLiveReportingService.js";
 
 const DATE_RANGES = ["lifetime", "this_month", "today"] as const;
 const NUMERIC_ID = /^\d+$/;
@@ -61,12 +66,13 @@ const principalRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       return reply.code(400).send({ error: "Principal does not have a GAM advertiser ID configured" });
     }
 
-    const dateRange = (request.query as { date_range?: string }).date_range;
-    if (!dateRange || !DATE_RANGES.includes(dateRange as typeof DATE_RANGES[number])) {
+    const dateRangeRaw = (request.query as { date_range?: string }).date_range;
+    if (!dateRangeRaw || !DATE_RANGES.includes(dateRangeRaw as typeof DATE_RANGES[number])) {
       return reply.code(400).send({
         error: "Invalid or missing date_range. Must be one of: lifetime, this_month, today",
       });
     }
+    const dateRange = dateRangeRaw as typeof DATE_RANGES[number];
     const orderId = (request.query as { order_id?: string }).order_id;
     if (orderId && !validateNumericId(orderId)) return reply.code(400).send({ error: "Invalid order_id format" });
     const lineItemId = (request.query as { line_item_id?: string }).line_item_id;
@@ -95,26 +101,62 @@ const principalRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
 
       const networkTimezone = adapterConfig.gamNetworkTimezone ?? "America/New_York";
 
-      const now = new Date();
-      const start = new Date(now);
-      start.setDate(1);
-      start.setHours(0, 0, 0, 0);
+      let rows = await getBaseReportingRows({
+        tenantId,
+        advertiserId,
+        orderId,
+        lineItemId,
+        dateRange,
+        timezone,
+      });
+      let queryType = "db_cached_gam_line_items";
+      try {
+        const liveRows = await fetchLiveGamBaseReportingRows({
+          tenantId,
+          advertiserId,
+          orderId,
+          lineItemId,
+          dateRange,
+        });
+        if (liveRows.length > 0) {
+          rows = liveRows;
+          queryType = "live_gam_report";
+        }
+      } catch {
+        // Fall back to cached DB reporting data.
+      }
 
-      // GAM reporting service not yet migrated to TypeScript.
+      const now = new Date();
+      const rangeStart =
+        dateRange === "today"
+          ? (() => {
+              const d = new Date(now);
+              d.setHours(0, 0, 0, 0);
+              return d;
+            })()
+          : dateRange === "this_month"
+            ? (() => {
+                const d = new Date(now);
+                d.setDate(1);
+                d.setHours(0, 0, 0, 0);
+                return d;
+              })()
+            : new Date(0);
+
       return reply.send({
         success: true,
         principal_id: principalId,
         advertiser_id: advertiserId,
-        data: [],
+        data: rows,
         metadata: {
-          start_date: start.toISOString(),
+          start_date: rangeStart.toISOString(),
           end_date: now.toISOString(),
           requested_timezone: timezone,
           data_timezone: networkTimezone,
           data_valid_until: now.toISOString(),
-          query_type: "stub",
-          dimensions: [],
-          metrics: [],
+          query_type: queryType,
+          dimensions: ["advertiser_id", "order_id", "line_item_id", "timestamp"],
+          metrics: ["impressions", "clicks", "spend"],
         },
       });
     } catch (err) {
@@ -147,12 +189,13 @@ const principalRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       return reply.code(400).send({ error: "Principal does not have a GAM advertiser ID configured" });
     }
 
-    const dateRange = (request.query as { date_range?: string }).date_range;
-    if (!dateRange || !DATE_RANGES.includes(dateRange as typeof DATE_RANGES[number])) {
+    const dateRangeRaw = (request.query as { date_range?: string }).date_range;
+    if (!dateRangeRaw || !DATE_RANGES.includes(dateRangeRaw as typeof DATE_RANGES[number])) {
       return reply.code(400).send({
         error: "Invalid or missing date_range. Must be one of: lifetime, this_month, today",
       });
     }
+    const dateRange = dateRangeRaw as typeof DATE_RANGES[number];
     const timezone = (request.query as { timezone?: string }).timezone ?? "America/New_York";
     try {
       Intl.DateTimeFormat(undefined, { timeZone: timezone });
@@ -173,15 +216,43 @@ const principalRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
         return reply.code(500).send({ error: "GAM client not configured for this tenant" });
       }
 
-      // GAM reporting service not yet migrated to TypeScript.
+      let summary = await getAdvertiserSummary({
+        tenantId,
+        advertiserId,
+        dateRange,
+        timezone,
+      });
+      try {
+        const liveRows = await fetchLiveGamBaseReportingRows({
+          tenantId,
+          advertiserId,
+          dateRange,
+        });
+        if (liveRows.length > 0) {
+          const totalImpressions = liveRows.reduce((sum, row) => sum + row.impressions, 0);
+          const totalSpend = liveRows.reduce((sum, row) => sum + row.spend, 0);
+          summary = {
+            advertiser_id: advertiserId,
+            total_impressions: totalImpressions,
+            total_spend: Number(totalSpend.toFixed(6)),
+            avg_cpm:
+              totalImpressions > 0
+                ? Number((((totalSpend / totalImpressions) * 1000)).toFixed(6))
+                : 0,
+          };
+        }
+      } catch {
+        // Fall back to cached DB reporting data.
+      }
+
       return reply.send({
         success: true,
         data: {
           principal_id: principalId,
-          advertiser_id: advertiserId,
-          total_impressions: 0,
-          total_spend: 0,
-          avg_cpm: 0,
+          advertiser_id: summary.advertiser_id,
+          total_impressions: summary.total_impressions,
+          total_spend: summary.total_spend,
+          avg_cpm: summary.avg_cpm,
         },
       });
     } catch (err) {

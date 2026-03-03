@@ -1,0 +1,448 @@
+<!-- Simple Targeting Selector Widget
+
+     Clean, inline key-value selector that matches the existing UI patterns.
+     No complex tabs or interfaces - just simple dropdowns and selection.
+-->
+
+<style>
+.targeting-selector {
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 1.5rem;
+    background: white;
+    margin: 1rem 0;
+}
+
+.targeting-selector h4 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    color: #333;
+    font-size: 1.1rem;
+}
+
+.targeting-section {
+    margin-bottom: 1.5rem;
+}
+
+.targeting-section label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: #555;
+}
+
+.targeting-section select {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.targeting-section select[multiple] {
+    height: 150px;
+}
+
+.selected-items {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: #f8f9fa;
+    border-radius: 4px;
+    min-height: 40px;
+}
+
+.selected-item {
+    display: inline-block;
+    background: #007bff;
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 3px;
+    margin: 0.25rem;
+    font-size: 0.85rem;
+}
+
+.selected-item button {
+    background: none;
+    border: none;
+    color: white;
+    margin-left: 0.5rem;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.loading {
+    color: #666;
+    font-style: italic;
+}
+
+.error {
+    color: #dc3545;
+    padding: 0.5rem;
+    background: #f8d7da;
+    border-radius: 4px;
+}
+</style>
+
+<div class="targeting-selector">
+    <h4>🎯 Custom Targeting</h4>
+
+    <!-- Key-Value Pairs -->
+    <div class="targeting-section">
+        <label for="targeting-key-select">Select Custom Targeting Key</label>
+        <select id="targeting-key-select" onchange="loadKeyValues(this.value)">
+            <option value="">-- Select a key --</option>
+        </select>
+
+        <div id="targeting-values-container" style="display: none; margin-top: 1rem;">
+            <label for="targeting-values-select">Select Values</label>
+            <select id="targeting-values-select" multiple onchange="addSelectedValues()">
+                <!-- Populated dynamically -->
+            </select>
+            <small style="color: #666; display: block; margin-top: 0.25rem;">
+                Hold Ctrl/Cmd to select multiple values
+            </small>
+        </div>
+    </div>
+
+    <!-- Selected Key-Value Pairs Display -->
+    <div class="targeting-section">
+        <label>Selected Targeting</label>
+        <div id="selected-targeting-display" class="selected-items">
+            <span style="color: #999;">No targeting selected</span>
+        </div>
+    </div>
+</div>
+
+<script>
+// Simple targeting widget - matches existing UI patterns
+let selectedTargeting = {};
+let availableKeys = [];
+let availableValues = {};
+
+// Load custom targeting keys on page load
+document.addEventListener('DOMContentLoaded', async function() {
+    try {
+        const tenantId = '{{ tenant_id }}';
+        const response = await fetch(`{{ script_name }}/api/tenant/${tenantId}/targeting/all`, {
+            credentials: 'same-origin'
+        });
+        const data = await response.json();
+
+        availableKeys = data.customKeys || [];
+
+        // Sort keys alphabetically by display name
+        availableKeys.sort((a, b) => {
+            const nameA = (a.display_name || a.name).toLowerCase();
+            const nameB = (b.display_name || b.name).toLowerCase();
+            return nameA.localeCompare(nameB);
+        });
+
+        // Populate keys dropdown
+        const keySelect = document.getElementById('targeting-key-select');
+        availableKeys.forEach(key => {
+            const option = document.createElement('option');
+            option.value = key.id;
+            option.textContent = key.display_name || key.name;
+            keySelect.appendChild(option);
+        });
+
+        // Load existing targeting if present
+        const existingData = document.getElementById('targeting-data').value;
+        if (existingData && existingData !== '{}') {
+            try {
+                const parsedData = JSON.parse(existingData);
+                selectedTargeting = parsedData.key_value_pairs || {};
+
+                // Build display names for existing targeting
+                // We need to load the values from the API to get display names
+                window.targetingDisplayNames = {};
+
+                // Load display names for all existing keys
+                const keyLoadPromises = [];
+                for (const keyName of Object.keys(selectedTargeting)) {
+                    const key = availableKeys.find(k => k.name === keyName);
+                    if (key) {
+                        // Initialize display names structure
+                        window.targetingDisplayNames[keyName] = {
+                            keyDisplay: key.display_name || key.name,
+                            values: {}
+                        };
+
+                        // Load values for this key to get display names
+                        const promise = fetch(`{{ script_name }}/api/tenant/${tenantId}/targeting/values/${key.id}`, {
+                            credentials: 'same-origin'
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            // Map value names to display info (both name and display_name)
+                            const values = data.values || [];
+                            values.forEach(value => {
+                                const valueName = value.name || value.id;
+                                const displayName = value.display_name || valueName;
+                                // Store both the name and display name for proper formatting
+                                window.targetingDisplayNames[keyName].values[valueName] = {
+                                    name: valueName,
+                                    displayName: displayName
+                                };
+                            });
+                        })
+                        .catch(err => {
+                            console.warn(`Failed to load display names for key ${keyName}:`, err);
+                        });
+
+                        keyLoadPromises.push(promise);
+                    }
+                }
+
+                // Wait for all display names to load, then update display
+                Promise.all(keyLoadPromises).then(() => {
+                    updateDisplay();
+                }).catch(err => {
+                    console.error('Error loading targeting display names:', err);
+                    // Still show the targeting, just with internal names
+                    updateDisplay();
+                });
+
+            } catch (e) {
+                console.error('Error parsing existing targeting:', e);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading targeting keys:', error);
+        document.getElementById('targeting-key-select').innerHTML =
+            '<option value="">Error loading keys</option>';
+    }
+});
+
+// Load values for selected key
+async function loadKeyValues(keyId) {
+    if (!keyId) {
+        document.getElementById('targeting-values-container').style.display = 'none';
+        return;
+    }
+
+    const container = document.getElementById('targeting-values-container');
+    const valuesSelect = document.getElementById('targeting-values-select');
+
+    container.style.display = 'block';
+    valuesSelect.innerHTML = '<option disabled>Loading...</option>';
+
+    try {
+        const tenantId = '{{ tenant_id }}';
+        const response = await fetch(`{{ script_name }}/api/tenant/${tenantId}/targeting/values/${keyId}`, {
+            credentials: 'same-origin'
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to load values: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        // Check if data.values exists and is an array
+        if (!data.values || !Array.isArray(data.values)) {
+            console.warn('No values returned from API or invalid format:', data);
+            valuesSelect.innerHTML = '<option disabled>No values available</option>';
+            return;
+        }
+
+        availableValues[keyId] = data.values;
+
+        // Debug: Log the first few values to see what data we're getting
+        if (data.values.length > 0) {
+            console.log('[DEBUG] Sample targeting values received:', data.values.slice(0, 3));
+            console.log('[DEBUG] First value structure:', {
+                id: data.values[0].id,
+                name: data.values[0].name,
+                display_name: data.values[0].display_name,
+                key_name: data.values[0].key_name
+            });
+        }
+
+        // Sort values alphabetically by display name
+        const sortedValues = [...data.values].sort((a, b) => {
+            const nameA = (a.display_name || a.name).toLowerCase();
+            const nameB = (b.display_name || b.name).toLowerCase();
+            return nameA.localeCompare(nameB);
+        });
+
+        // Get the key's display name for better display
+        const selectedKey = availableKeys.find(k => k.id === keyId);
+        const keyDisplayName = selectedKey ? (selectedKey.display_name || selectedKey.name) : (data.values[0]?.key_name || '');
+
+        // Populate values dropdown
+        valuesSelect.innerHTML = '';
+        sortedValues.forEach(value => {
+            const option = document.createElement('option');
+            option.value = value.id;
+
+            // Show both name and display_name for context
+            // Format: "name - display_name" or just "display_name" if name is numeric/ID-like
+            const valueName = value.name || value.id;
+            const displayName = value.display_name || '';
+
+            // Debug for first few values
+            if (sortedValues.indexOf(value) < 3) {
+                console.log(`[DEBUG] Value ${sortedValues.indexOf(value)}:`, {
+                    valueName,
+                    displayName,
+                    'displayName !== valueName': displayName !== valueName,
+                    'displayName.match(/^\\d+$/)': displayName ? displayName.match(/^\d+$/) : null
+                });
+            }
+
+            // If display_name exists and is different from name, show both
+            if (displayName && displayName !== valueName && !displayName.match(/^\d+$/)) {
+                option.textContent = `${displayName} (${valueName})`;
+                if (sortedValues.indexOf(value) < 3) {
+                    console.log(`[DEBUG] Using format: "${displayName} (${valueName})"`);
+                }
+            } else if (displayName && !displayName.match(/^\d+$/)) {
+                // Display name is meaningful (not just a number), use it
+                option.textContent = displayName;
+                if (sortedValues.indexOf(value) < 3) {
+                    console.log(`[DEBUG] Using display name only: "${displayName}"`);
+                }
+            } else {
+                // Fallback to name
+                option.textContent = valueName;
+                if (sortedValues.indexOf(value) < 3) {
+                    console.log(`[DEBUG] Using name only (fallback): "${valueName}"`);
+                }
+            }
+
+            option.dataset.keyId = keyId;
+            option.dataset.keyName = value.key_name || '';
+            option.dataset.keyDisplayName = keyDisplayName;
+            option.dataset.valueName = value.name;
+            option.dataset.valueDisplayName = value.display_name || value.name;
+            valuesSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Error loading values:', error);
+        valuesSelect.innerHTML = `<option disabled>Error loading values: ${error.message}</option>`;
+
+        // Show error notification to user
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error';
+        errorDiv.textContent = `Failed to load targeting values: ${error.message}`;
+        errorDiv.style.marginTop = '0.5rem';
+        container.appendChild(errorDiv);
+
+        // Remove error after 5 seconds
+        setTimeout(() => errorDiv.remove(), 5000);
+    }
+}
+
+// Add selected values to targeting
+function addSelectedValues() {
+    const valuesSelect = document.getElementById('targeting-values-select');
+    const selectedOptions = Array.from(valuesSelect.selectedOptions);
+
+    selectedOptions.forEach(option => {
+        const keyId = option.dataset.keyId;
+        const keyName = option.dataset.keyName;
+        const keyDisplayName = option.dataset.keyDisplayName;
+        const valueId = option.value;
+        const valueName = option.dataset.valueName;
+        const valueDisplayName = option.dataset.valueDisplayName;
+
+        // Initialize key array if doesn't exist
+        if (!selectedTargeting[keyName]) {
+            selectedTargeting[keyName] = [];
+        }
+
+        // Store display names separately for UI rendering
+        if (!window.targetingDisplayNames) {
+            window.targetingDisplayNames = {};
+        }
+        if (!window.targetingDisplayNames[keyName]) {
+            window.targetingDisplayNames[keyName] = {
+                keyDisplay: keyDisplayName,
+                values: {}
+            };
+        }
+        // Store both name and display name for proper formatting
+        window.targetingDisplayNames[keyName].values[valueName] = {
+            name: valueName,
+            displayName: valueDisplayName
+        };
+
+        // Add value if not already present (using internal name for API)
+        if (!selectedTargeting[keyName].includes(valueName)) {
+            selectedTargeting[keyName].push(valueName);
+        }
+    });
+
+    updateDisplay();
+    updateHiddenField();
+}
+
+// Update visual display of selected targeting
+function updateDisplay() {
+    const display = document.getElementById('selected-targeting-display');
+
+    if (Object.keys(selectedTargeting).length === 0) {
+        display.innerHTML = '<span style="color: #999;">No targeting selected</span>';
+        return;
+    }
+
+    let html = '';
+    for (const [key, values] of Object.entries(selectedTargeting)) {
+        // Get display name for key (fallback to internal name if not found)
+        const keyDisplay = window.targetingDisplayNames?.[key]?.keyDisplay || key;
+
+        values.forEach(value => {
+            // Get display info for value (can be object with name+displayName, or just a string)
+            const valueInfo = window.targetingDisplayNames?.[key]?.values?.[value];
+            let valueDisplay;
+
+            if (valueInfo && typeof valueInfo === 'object') {
+                // New format: object with name and displayName
+                const name = valueInfo.name || value;
+                const displayName = valueInfo.displayName || name;
+
+                // Format as "Display Name (ID)" if they're different, otherwise just show one
+                if (displayName && displayName !== name && !displayName.match(/^\d+$/)) {
+                    valueDisplay = `${displayName} (${name})`;
+                } else {
+                    valueDisplay = displayName || name;
+                }
+            } else {
+                // Legacy format: plain string or missing
+                valueDisplay = valueInfo || value;
+            }
+
+            html += `
+                <span class="selected-item">
+                    ${keyDisplay}: ${valueDisplay}
+                    <button type="button" onclick="removeTargeting('${key}', '${value}')">&times;</button>
+                </span>
+            `;
+        });
+    }
+
+    display.innerHTML = html;
+}
+
+// Remove a targeting key-value pair
+function removeTargeting(key, value) {
+    if (selectedTargeting[key]) {
+        selectedTargeting[key] = selectedTargeting[key].filter(v => v !== value);
+        if (selectedTargeting[key].length === 0) {
+            delete selectedTargeting[key];
+        }
+    }
+    updateDisplay();
+    updateHiddenField();
+}
+
+// Update hidden field with current targeting data
+function updateHiddenField() {
+    const hiddenField = document.getElementById('targeting-data');
+    const targetingData = {
+        key_value_pairs: selectedTargeting
+    };
+    hiddenField.value = JSON.stringify(targetingData);
+}
+</script>

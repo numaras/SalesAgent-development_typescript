@@ -60,5 +60,6 @@ export const getTargetingValuesRouteSchema = {
     200: targetingValuesSuccessSchema,
     400: inventoryErrorSchema,
     404: inventoryErrorSchema,
+    500: inventoryErrorSchema,
   },
 } as const;

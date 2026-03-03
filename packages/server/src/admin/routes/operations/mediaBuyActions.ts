@@ -8,6 +8,7 @@ import { mediaBuys } from "../../../db/schema/mediaBuys.js";
 import { objectWorkflowMappings, workflowSteps } from "../../../db/schema/workflowSteps.js";
 import { validateOutboundUrl } from "../../../security/outboundUrl.js";
 import { getMediaBuyDelivery } from "../../../services/deliveryQueryService.js";
+import { executeApprovedMediaBuyViaAdapter } from "../../../services/mediaBuyAdapterCall.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
 import { getAdminSession } from "../../services/sessionService.js";
 
@@ -168,7 +169,22 @@ const mediaBuyActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance
           })
           .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.mediaBuyId, mbId)));
 
-        // execute_approved_media_buy() adapter call not yet migrated to TS
+        const execution = await executeApprovedMediaBuyViaAdapter(
+          { tenantId: id, principalId: mediaBuy.principalId },
+          mbId,
+          mediaBuy.rawRequest,
+        );
+        if (!execution.success) {
+          await db
+            .update(mediaBuys)
+            .set({ status: "failed", updatedAt: new Date() })
+            .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.mediaBuyId, mbId)));
+
+          return reply.code(500).send({
+            success: false,
+            error: `Media buy approved but adapter creation failed: ${execution.error}`,
+          });
+        }
       }
     } else {
       // reject: set media buy to "rejected" if currently pending_approval (Python L533-535)

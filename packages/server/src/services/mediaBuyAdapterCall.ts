@@ -18,6 +18,7 @@ import { buildGamClient } from "../gam/gamClient.js";
 import { mediaBuys, mediaPackages } from "../db/schema/mediaBuys.js";
 import { objectWorkflowMappings } from "../db/schema/workflowSteps.js";
 import type { CreateMediaBuyRequest } from "../schemas/mediaBuyCreate.js";
+import { CreateMediaBuyRequestSchema } from "../schemas/mediaBuyCreate.js";
 import type {
   CreateMediaBuyResponse,
   CreateMediaBuySuccess,
@@ -44,6 +45,10 @@ interface AdapterCreateResponse {
   media_buy_id?: string;
   buyer_ref?: string;
   packages?: AdapterCreatePackage[];
+}
+
+interface InvokeCreateAdapterOptions {
+  allowMockFallback?: boolean;
 }
 
 function buildGeneratedMediaBuyId(ctx: MediaBuyCreateContext): string {
@@ -138,8 +143,10 @@ function normalizeCreateResponse(
 async function invokeCreateAdapter(
   ctx: MediaBuyCreateContext,
   request: CreateMediaBuyRequest,
+  options?: InvokeCreateAdapterOptions,
 ): Promise<AdapterCreateResponse> {
   const generatedMediaBuyId = buildGeneratedMediaBuyId(ctx);
+  const allowMockFallback = options?.allowMockFallback !== false;
 
   // Look up adapter config for this tenant
   const [adapter] = await db
@@ -192,6 +199,11 @@ async function invokeCreateAdapter(
         })),
       };
     } catch (gamErr) {
+      if (!allowMockFallback) {
+        throw new Error(
+          `GAM createOrders failed: ${gamErr instanceof Error ? gamErr.message : String(gamErr)}`,
+        );
+      }
       // GAM call failed — fall through to mock response with error logged
       console.error(`[mediaBuyAdapterCall] GAM createOrders failed: ${gamErr instanceof Error ? gamErr.message : String(gamErr)}. Falling back to mock.`);
     }
@@ -294,6 +306,39 @@ export async function createMediaBuyViaAdapter(
   const normalized = normalizeCreateResponse(fallbackMediaBuyId, request, adapterResponse);
   await persistMediaBuy(ctx, request, normalized);
   return normalized;
+}
+
+/**
+ * Execute adapter creation for an already-approved media buy.
+ *
+ * Reconstructs/validates the original CreateMediaBuyRequest from raw_request and
+ * invokes the adapter without creating additional MediaBuy rows.
+ */
+export async function executeApprovedMediaBuyViaAdapter(
+  ctx: MediaBuyCreateContext,
+  mediaBuyId: string,
+  rawRequest: unknown,
+): Promise<{ success: true; externalMediaBuyId: string } | { success: false; error: string }> {
+  let parsedRequest: CreateMediaBuyRequest;
+  try {
+    parsedRequest = CreateMediaBuyRequestSchema.parse(rawRequest);
+  } catch (err) {
+    return {
+      success: false,
+      error: `Failed to reconstruct create-media-buy request: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  try {
+    const adapterResponse = await invokeCreateAdapter(ctx, parsedRequest, { allowMockFallback: false });
+    const normalized = normalizeCreateResponse(mediaBuyId, parsedRequest, adapterResponse);
+    return { success: true, externalMediaBuyId: normalized.media_buy_id ?? mediaBuyId };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 /**

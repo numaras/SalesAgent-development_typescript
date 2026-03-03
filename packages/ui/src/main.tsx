@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { ThemeProvider, createTheme, CssBaseline } from "@mui/material";
 import { AuthProvider } from "./context/AuthContext";
 import App from "./App";
@@ -23,6 +23,7 @@ import TenantSettingsPage from "./pages/TenantSettingsPage";
 import GamConfigPage from "./pages/GamConfigPage";
 import GamReportingPage from "./pages/GamReportingPage";
 import SignupPage from "./pages/SignupPage";
+import CreativeAgentsPage from "./pages/CreativeAgentsPage";
 
 const cockpitTheme = createTheme({
   palette: {
@@ -291,12 +292,17 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route path="/tenant/:id/authorized-properties/create" element={<AuthorizedPropertiesPage />} />
         <Route path="/tenant/:id/authorized-properties/:propertyId/edit" element={<AuthorizedPropertiesPage />} />
         <Route path="/tenant/:id/authorized-properties" element={<AuthorizedPropertiesPage />} />
+        <Route path="/tenant/:id/inventory" element={<LegacyInventoryRedirect />} />
+        <Route path="/tenant/:id/targeting" element={<LegacyTargetingRedirect />} />
         <Route path="/tenant/:id/inventory-profiles" element={<InventoryProfilesPage />} />
         <Route path="/tenant/:id/inventory-profiles/add" element={<InventoryProfileEditPage />} />
         <Route path="/tenant/:id/inventory-profiles/:profileId/edit" element={<InventoryProfileEditPage />} />
         <Route path="/tenant/:id/principals/create" element={<PrincipalsPage />} />
         <Route path="/tenant/:id/principals/:principalId/edit" element={<PrincipalsPage />} />
         <Route path="/tenant/:id/principals" element={<PrincipalsPage />} />
+        <Route path="/tenant/:id/creative-agents/add" element={<CreativeAgentsPage />} />
+        <Route path="/tenant/:id/creative-agents/:agentId/edit" element={<CreativeAgentsPage />} />
+        <Route path="/tenant/:id/creative-agents" element={<CreativeAgentsPage />} />
         <Route path="/tenant/:id/users" element={<UsersPage />} />
         <Route path="/tenant/:id/settings" element={<TenantSettingsPage />} />
         <Route path="/tenant/:id/gam/config" element={<GamConfigPage />} />
@@ -316,6 +322,18 @@ function NotFound() {
       <Typography variant="body1" sx={{ color: "text.secondary" }}>Page not found.</Typography>
     </Box>
   );
+}
+
+function LegacyInventoryRedirect() {
+  const { id } = useParams<{ id: string }>();
+  if (!id) return <NotFound />;
+  return <Navigate to={`/tenant/${id}/inventory-profiles`} replace />;
+}
+
+function LegacyTargetingRedirect() {
+  const { id } = useParams<{ id: string }>();
+  if (!id) return <NotFound />;
+  return <Navigate to={`/tenant/${id}/settings`} replace />;
 }
 
 import { Box, Typography } from "@mui/material";

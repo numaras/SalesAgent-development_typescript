@@ -110,11 +110,16 @@ describe("Admin schema-bound routes (adapters, gam, api)", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("inventorySchema returns 501 placeholder", async () => {
+  it("inventorySchema returns 200 with schema metadata", async () => {
     const app = await createRouteApp(inventorySchemaRoute);
     const res = await app.inject({ method: "GET", url: "/tenant/tenant-1/adapter/mock/inventory_schema" });
     await app.close();
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      adapter_name: "mock",
+      supports_inventory_sync: false,
+      entities: [],
+    });
   });
 
   it("gamConfig GET returns 401 when session is missing", async () => {

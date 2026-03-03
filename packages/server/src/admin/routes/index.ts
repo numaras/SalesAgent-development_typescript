@@ -6,6 +6,7 @@
  * app.ts only needs one `app.register(adminRoutes)` call.
  */
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import adminRootRoute from "./core/adminRoot.js";
 
 // Auth
 import loginRoute from "./auth/login.js";
@@ -139,6 +140,8 @@ import setupModeRoute from "./users/setupMode.js";
 import userActionsRoute from "./users/userActions.js";
 
 const adminRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+  await fastify.register(adminRootRoute);
+
   // Auth + session
   await fastify.register(loginRoute);
   await fastify.register(logoutRoute);

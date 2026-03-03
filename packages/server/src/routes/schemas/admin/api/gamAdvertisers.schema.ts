@@ -18,10 +18,12 @@ const advertisersSuccessSchema = z.object({
     z.object({
       id: z.string(),
       name: z.string(),
-      principal_id: z.string(),
     }),
   ),
   count: z.number(),
+  search: z.string().nullable(),
+  fetch_all: z.boolean(),
+  limit: z.number(),
 });
 
 const testConnectionBodySchema = z.object({
@@ -55,6 +57,7 @@ export const getGamAdvertisersRouteSchema = {
     400: basicErrorSchema,
     401: unauthenticatedErrorSchema,
     404: basicErrorSchema,
+    500: basicErrorSchema,
   },
 } as const;
 

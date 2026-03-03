@@ -3,13 +3,13 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 
 import { db } from "../../../db/client.js";
 import { auditLogs } from "../../../db/schema/auditLogs.js";
-import { principals } from "../../../db/schema/principals.js";
 import { tenants } from "../../../db/schema/tenants.js";
 import { buildGamDiscoveryClient } from "../../../gam/gamClient.js";
 import {
   getGamAdvertisersRouteSchema,
   testGamConnectionByRefreshTokenRouteSchema,
 } from "../../../routes/schemas/admin/api/gamAdvertisers.schema.js";
+import { fetchGamAdvertisers } from "../../../services/gamAdvertiserService.js";
 import { getAdminSession } from "../../services/sessionService.js";
 
 function resolveTenantId(
@@ -43,48 +43,27 @@ const gamAdvertisersRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
     }
 
     const search =
-      typeof body.search === "string" ? body.search.trim().toLowerCase() : "";
+      typeof body.search === "string" ? body.search : undefined;
     const limitInput =
       typeof body.limit === "number"
         ? body.limit
         : typeof body.limit === "string"
           ? Number(body.limit)
-          : 500;
-    const limit = Number.isFinite(limitInput) ? Math.min(Math.max(limitInput, 1), 500) : 500;
+          : undefined;
+    const fetchAll = body.fetch_all === true;
 
-    const rows = await db
-      .select({
-        principal_id: principals.principalId,
-        name: principals.name,
-        platform_mappings: principals.platformMappings,
-      })
-      .from(principals)
-      .where(eq(principals.tenantId, tenantId));
-
-    const advertisers = rows
-      .map((row) => {
-        const mappings =
-          row.platform_mappings && typeof row.platform_mappings === "object"
-            ? row.platform_mappings
-            : {};
-        const advertiserId =
-          typeof mappings["google_ad_manager"] === "string"
-            ? mappings["google_ad_manager"]
-            : row.principal_id;
-        return {
-          id: advertiserId,
-          name: row.name,
-          principal_id: row.principal_id,
-        };
-      })
-      .filter((item) => {
-        if (!search) return true;
-        return (
-          item.name.toLowerCase().includes(search) ||
-          item.id.toLowerCase().includes(search)
-        );
-      })
-      .slice(0, limit);
+    let result;
+    try {
+      result = await fetchGamAdvertisers({
+        tenantId,
+        search,
+        limit: limitInput,
+        fetchAll,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: `Failed to fetch advertisers: ${message}` });
+    }
 
     const actor = getAdminSession(request).user;
     const actorStr = typeof actor === "string" ? actor : "unknown";
@@ -95,15 +74,11 @@ const gamAdvertisersRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
         principalName: actorStr,
         adapterId: "admin_ui",
         success: true,
-        details: { event_type: "gam_get_advertisers", count: advertisers.length },
+        details: { event_type: "gam_get_advertisers", count: result.count },
       });
     } catch { /* audit failure must not block response */ }
 
-    return reply.send({
-      success: true,
-      advertisers,
-      count: advertisers.length,
-    });
+    return reply.send({ success: true, ...result });
   });
 
   fastify.post("/api/gam/test-connection", { schema: testGamConnectionByRefreshTokenRouteSchema }, async (request, reply) => {

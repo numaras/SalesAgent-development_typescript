@@ -9,6 +9,8 @@ import { db } from "../../../db/client.js";
 import { adapterConfigs } from "../../../db/schema/adapterConfigs.js";
 import { tenants } from "../../../db/schema/tenants.js";
 import { gamReportingBaseRouteSchema } from "../../../routes/schemas/admin/gamReporting/base.schema.js";
+import { getBaseReportingRows } from "../../services/gamReportingService.js";
+import { fetchLiveGamBaseReportingRows } from "../../../services/gamLiveReportingService.js";
 import { requireTenantAccess } from "../../services/authGuard.js";
 
 const DATE_RANGES = ["lifetime", "this_month", "today"] as const;
@@ -33,12 +35,13 @@ const baseRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       return reply.code(400).send({ error: "GAM reporting is only available for tenants using Google Ad Manager" });
     }
 
-    const dateRange = (request.query as { date_range?: string }).date_range;
-    if (!dateRange || !DATE_RANGES.includes(dateRange as typeof DATE_RANGES[number])) {
+    const dateRangeRaw = (request.query as { date_range?: string }).date_range;
+    if (!dateRangeRaw || !DATE_RANGES.includes(dateRangeRaw as typeof DATE_RANGES[number])) {
       return reply.code(400).send({
         error: "Invalid or missing date_range. Must be one of: lifetime, this_month, today",
       });
     }
+    const dateRange = dateRangeRaw as typeof DATE_RANGES[number];
 
     const advertiserId = (request.query as { advertiser_id?: string }).advertiser_id;
     if (advertiserId && !validateNumericId(advertiserId)) {
@@ -73,24 +76,60 @@ const baseRoute: FastifyPluginAsync = async (fastify: FastifyInstance) => {
 
       const networkTimezone = adapterConfig.gamNetworkTimezone ?? timezone;
 
-      const now = new Date();
-      const start = new Date(now);
-      start.setDate(1);
-      start.setHours(0, 0, 0, 0);
+      let rows = await getBaseReportingRows({
+        tenantId,
+        dateRange,
+        advertiserId,
+        orderId,
+        lineItemId,
+        timezone,
+      });
+      let queryType = "db_cached_gam_line_items";
+      try {
+        const liveRows = await fetchLiveGamBaseReportingRows({
+          tenantId,
+          dateRange,
+          advertiserId,
+          orderId,
+          lineItemId,
+        });
+        if (liveRows.length > 0) {
+          rows = liveRows;
+          queryType = "live_gam_report";
+        }
+      } catch {
+        // Fall back to cached DB reporting data.
+      }
 
-      // GAM reporting service not yet migrated to TypeScript.
+      const now = new Date();
+      const rangeStart =
+        dateRange === "today"
+          ? (() => {
+              const d = new Date(now);
+              d.setHours(0, 0, 0, 0);
+              return d;
+            })()
+          : dateRange === "this_month"
+            ? (() => {
+                const d = new Date(now);
+                d.setDate(1);
+                d.setHours(0, 0, 0, 0);
+                return d;
+              })()
+            : new Date(0);
+
       return reply.send({
         success: true,
-        data: [],
+        data: rows,
         metadata: {
-          start_date: start.toISOString(),
+          start_date: rangeStart.toISOString(),
           end_date: now.toISOString(),
           requested_timezone: timezone,
           data_timezone: networkTimezone,
           data_valid_until: now.toISOString(),
-          query_type: "stub",
-          dimensions: [],
-          metrics: [],
+          query_type: queryType,
+          dimensions: ["advertiser_id", "order_id", "line_item_id", "timestamp"],
+          metrics: ["impressions", "clicks", "spend"],
         },
       });
     } catch (err) {

@@ -268,11 +268,11 @@ const tenantManagementApiRoute: FastifyPluginAsync = async (fastify: FastifyInst
       defaultPrincipalToken = randomBytes(24).toString("base64url").slice(0, 32);
       const defaultMappings: Record<string, unknown> =
         adServer === "google_ad_manager"
-          ? { google_ad_manager: { advertiser_id: "placeholder" } }
+          ? { google_ad_manager: { enabled: false } }
           : adServer === "kevel"
-            ? { kevel: { advertiser_id: "placeholder" } }
+            ? { kevel: { enabled: false } }
             : adServer === "triton"
-              ? { triton: { advertiser_id: "placeholder" } }
+              ? { triton: { enabled: false } }
               : { mock: { advertiser_id: "default" } };
       await db.insert(principals).values({
         tenantId,

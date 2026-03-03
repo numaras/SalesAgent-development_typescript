@@ -1,0 +1,659 @@
+<!-- Targeting Selector Widget - GAM-style nested groups targeting
+
+     Features:
+     - Multiple groups connected by OR logic
+     - Within each group, criteria connected by AND logic
+     - Each criterion: key, operator, values as chips
+     - Include/Exclude toggle for each criterion
+-->
+
+<style>
+/* Targeting Widget Styles */
+.targeting-widget {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 1.5rem;
+    background: #f8f9fa;
+    margin: 1rem 0;
+}
+
+.targeting-widget h4 {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    color: #333;
+}
+
+/* Groups Container */
+.groups-container {
+    margin-bottom: 1rem;
+}
+
+/* Group Card */
+.group-card {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+}
+
+.group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    border-radius: 6px 6px 0 0;
+}
+
+.group-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #495057;
+}
+
+.remove-group-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: #6c757d;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.remove-group-btn:hover {
+    background: #f8d7da;
+    color: #dc3545;
+}
+
+/* Criteria List */
+.criteria-list {
+    padding: 1rem;
+}
+
+/* Or Divider */
+.or-divider {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0.5rem 0;
+    position: relative;
+}
+
+.or-divider::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #007bff;
+}
+
+.or-divider span {
+    background: #f8f9fa;
+    padding: 0.25rem 0.75rem;
+    font-weight: 600;
+    color: #007bff;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    z-index: 1;
+    border-radius: 4px;
+}
+
+/* And Connector */
+.and-connector {
+    display: flex;
+    align-items: center;
+    margin: 0.5rem 0;
+    padding-left: 1rem;
+}
+
+.and-connector span {
+    font-weight: 500;
+    color: #6c757d;
+    font-size: 0.85rem;
+    text-transform: lowercase;
+}
+
+/* Criterion Row */
+.criterion-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    flex-wrap: wrap;
+}
+
+.criterion-row.excluded {
+    background: #fff5f5;
+    border-color: #f8d7da;
+}
+
+.criterion-row.editing {
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.criterion-key {
+    font-weight: 600;
+    color: #333;
+    min-width: 120px;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0.4rem 0.75rem;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+/* Operator Dropdown */
+.criterion-operator-select {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: white;
+    font-size: 0.9rem;
+    color: #495057;
+    cursor: pointer;
+    min-width: 110px;
+}
+
+.criterion-operator-select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.criterion-row.excluded .criterion-operator-select {
+    border-color: #f8d7da;
+    background: #fff5f5;
+    color: #dc3545;
+}
+
+.criterion-values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 200px;
+    align-items: center;
+}
+
+/* Value Chips */
+.value-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 16px;
+    font-size: 0.85rem;
+    background: #e7f5ff;
+    color: #1971c2;
+    border: 1px solid #a5d8ff;
+}
+
+.value-chip.include {
+    background: #e6fcf5;
+    color: #0ca678;
+    border-color: #96f2d7;
+}
+
+.value-chip.exclude {
+    background: #fff5f5;
+    color: #e03131;
+    border-color: #ffc9c9;
+}
+
+.chip-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    color: inherit;
+    opacity: 0.7;
+    padding: 0;
+    border-radius: 50%;
+}
+
+.chip-remove:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.add-value-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: 1px dashed #adb5bd;
+    background: white;
+    cursor: pointer;
+    font-size: 1rem;
+    color: #6c757d;
+    border-radius: 50%;
+    transition: all 0.2s;
+}
+
+.add-value-btn:hover {
+    border-color: #007bff;
+    color: #007bff;
+    background: #f8f9fa;
+}
+
+/* Criterion Actions */
+.criterion-actions {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+}
+
+.remove-criterion-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    color: #6c757d;
+    transition: all 0.2s;
+}
+
+.remove-criterion-btn:hover {
+    border-color: #dc3545;
+    background: #f8d7da;
+    color: #dc3545;
+}
+
+/* Add Criterion Row */
+.add-criterion-row {
+    margin-top: 0.75rem;
+}
+
+.add-criterion-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: 1px dashed #adb5bd;
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    color: #6c757d;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.add-criterion-btn:hover {
+    border-color: #007bff;
+    color: #007bff;
+    background: white;
+}
+
+/* Add Group Button */
+.add-group-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.25rem;
+    border: none;
+    border-radius: 4px;
+    background: #007bff;
+    cursor: pointer;
+    color: white;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.add-group-btn:hover {
+    background: #0056b3;
+}
+
+/* Value Selector Modal */
+.value-selector-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.value-selector-content {
+    background: white;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.value-selector-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.value-selector-header h5 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #333;
+}
+
+.close-selector-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 1.5rem;
+    color: #6c757d;
+    border-radius: 4px;
+}
+
+.close-selector-btn:hover {
+    background: #f8f9fa;
+    color: #333;
+}
+
+.value-selector-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.key-selector-section {
+    margin-bottom: 1.5rem;
+}
+
+.key-selector-section label,
+.values-section label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: #333;
+}
+
+.key-dropdown {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    font-size: 0.95rem;
+    background: white;
+}
+
+.key-dropdown:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+/* Key Search and List */
+.key-search-input {
+    width: 100%;
+    padding: 0.6rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.key-search-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.key-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: white;
+}
+
+.key-option {
+    padding: 0.6rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f1f3f4;
+    transition: background 0.15s;
+    font-size: 0.95rem;
+    color: #333;
+}
+
+.key-option:last-child {
+    border-bottom: none;
+}
+
+.key-option:hover {
+    background: #e7f5ff;
+    color: #1971c2;
+}
+
+/* Selected Key Display */
+.selected-key-display {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.75rem;
+    background: #e7f5ff;
+    border: 1px solid #a5d8ff;
+    border-radius: 4px;
+    color: #1971c2;
+    font-weight: 500;
+}
+
+.change-key-btn {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid #a5d8ff;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #1971c2;
+    transition: all 0.2s;
+}
+
+.change-key-btn:hover {
+    background: #f8f9fa;
+    border-color: #1971c2;
+}
+
+.values-section {
+    margin-top: 1rem;
+}
+
+.value-search-input {
+    width: 100%;
+    padding: 0.6rem;
+    margin-bottom: 1rem;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.value-search-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.15);
+}
+
+.values-list {
+    max-height: 250px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+.value-option {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f1f3f4;
+    transition: background 0.15s;
+}
+
+.value-option:last-child {
+    border-bottom: none;
+}
+
+.value-option:hover {
+    background: #f8f9fa;
+}
+
+.value-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.value-label {
+    flex: 1;
+    font-size: 0.95rem;
+    color: #333;
+}
+
+.value-selector-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #dee2e6;
+    background: #f8f9fa;
+    border-radius: 0 0 8px 8px;
+}
+
+.cancel-btn {
+    padding: 0.6rem 1.25rem;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    font-size: 0.95rem;
+    color: #333;
+    transition: all 0.2s;
+}
+
+.cancel-btn:hover {
+    background: #f8f9fa;
+    border-color: #adb5bd;
+}
+
+.apply-btn {
+    padding: 0.6rem 1.5rem;
+    border: none;
+    border-radius: 4px;
+    background: #007bff;
+    cursor: pointer;
+    font-size: 0.95rem;
+    color: white;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.apply-btn:hover:not(:disabled) {
+    background: #0056b3;
+}
+
+.apply-btn:disabled {
+    background: #adb5bd;
+    cursor: not-allowed;
+}
+
+/* Empty and Status States */
+.empty-state, .error-state, .loading {
+    padding: 2rem;
+    text-align: center;
+    color: #6c757d;
+}
+
+.error-state {
+    color: #dc3545;
+}
+
+.loading {
+    color: #007bff;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .criterion-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .criterion-key {
+        min-width: auto;
+        max-width: none;
+        width: 100%;
+    }
+
+    .criterion-values {
+        width: 100%;
+    }
+
+    .criterion-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 0.5rem;
+    }
+}
+</style>
+
+<!-- Widget Container -->
+<div class="targeting-widget" id="targeting-widget">
+    <h4>Custom Targeting</h4>
+    <p style="margin: 0 0 1rem 0; color: #666; font-size: 0.9rem;">
+        Build targeting rules. Use "And" to add criteria within a group, "Or" to add alternate groups.
+    </p>
+    <!-- Content will be populated by JavaScript -->
+</div>
+
+<!-- Load External JavaScript -->
+<script src="{{ url_for('static', filename='js/targeting_widget.js') }}"></script>
+<script>
+// Initialize targeting widget with tenant context and script root for proxy support
+document.addEventListener('DOMContentLoaded', function() {
+    const tenantId = '{{ tenant_id }}';
+    const scriptRoot = '{{ request.script_root }}' || '';
+
+    if (tenantId) {
+        new TargetingWidget(tenantId, 'targeting-widget', scriptRoot);
+    }
+});
+</script>

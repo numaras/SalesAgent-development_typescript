@@ -1,0 +1,277 @@
+"""
+Targeting capabilities configuration.
+
+Defines which targeting dimensions are available for overlay vs managed-only access.
+This is critical for AEE (Ad Effectiveness Engine) integration.
+
+AdCP TargetingOverlay defines: geo_countries, geo_regions, geo_metros,
+geo_postal_areas, frequency_cap, property_list, axe_include_segment,
+axe_exclude_segment.  Everything else here is a seller extension — standard
+ad-server dimensions (device, OS, browser, media type, audience) that AdCP
+does not yet define but that adapters actively support.  These are candidates
+for upstream inclusion in AdCP.
+"""
+
+from typing import Any
+
+from src.core.schemas import Targeting, TargetingCapability
+
+# Define targeting capabilities for the platform
+TARGETING_CAPABILITIES: dict[str, TargetingCapability] = {
+    # ── AdCP-defined dimensions ──────────────────────────────────────────
+    # These map directly to fields on adcp.types.TargetingOverlay.
+    "geo_country": TargetingCapability(
+        dimension="geo_country", access="overlay", description="Country-level targeting using ISO 3166-1 alpha-2 codes"
+    ),
+    "geo_region": TargetingCapability(dimension="geo_region", access="overlay", description="State/province targeting"),
+    "geo_metro": TargetingCapability(dimension="geo_metro", access="overlay", description="Metro/DMA targeting"),
+    "geo_zip": TargetingCapability(dimension="geo_zip", access="overlay", description="Postal code targeting"),
+    "frequency_cap": TargetingCapability(
+        dimension="frequency_cap", access="overlay", description="Impression frequency limits"
+    ),
+    # ── Seller extensions ────────────────────────────────────────────────
+    # Standard ad-server dimensions not yet in AdCP TargetingOverlay.
+    # Adapters (GAM, Kevel, Triton, Xandr) actively consume these.
+    # Candidates for upstream AdCP inclusion.
+    "device_type": TargetingCapability(
+        dimension="device_type",
+        access="overlay",
+        description="Device type targeting",
+        allowed_values=["mobile", "desktop", "tablet", "ctv", "dooh", "audio"],
+    ),
+    "device_make": TargetingCapability(
+        dimension="device_make", access="overlay", description="Device manufacturer targeting"
+    ),
+    "os": TargetingCapability(dimension="os", access="overlay", description="Operating system targeting"),
+    "browser": TargetingCapability(dimension="browser", access="overlay", description="Browser targeting"),
+    "content_category": TargetingCapability(
+        dimension="content_category", access="overlay", description="IAB content category targeting"
+    ),
+    "content_language": TargetingCapability(
+        dimension="content_language", access="overlay", description="Content language targeting"
+    ),
+    "content_rating": TargetingCapability(
+        dimension="content_rating", access="overlay", description="Content rating targeting"
+    ),
+    "media_type": TargetingCapability(
+        dimension="media_type",
+        access="overlay",
+        description="Media type targeting",
+        allowed_values=["video", "display", "native", "audio", "dooh"],
+    ),
+    "audience_segment": TargetingCapability(
+        dimension="audience_segment", access="overlay", description="Third-party audience segments"
+    ),
+    "custom": TargetingCapability(dimension="custom", access="both", description="Platform-specific custom targeting"),
+    # ── Removed dimensions ───────────────────────────────────────────────
+    "geo_city": TargetingCapability(
+        dimension="geo_city",
+        access="removed",
+        description="City-level targeting (removed in v3, no adapter supports it)",
+    ),
+    # ── Managed-only (AEE signal integration) ────────────────────────────
+    "key_value_pairs": TargetingCapability(
+        dimension="key_value_pairs",
+        access="managed_only",
+        description="Key-value pairs for AEE signal integration",
+        axe_signal=True,
+    ),
+    "aee_segment": TargetingCapability(
+        dimension="aee_segment", access="managed_only", description="AEE-computed audience segments", axe_signal=True
+    ),
+    "aee_score": TargetingCapability(
+        dimension="aee_score", access="managed_only", description="AEE effectiveness scores", axe_signal=True
+    ),
+    "aee_context": TargetingCapability(
+        dimension="aee_context", access="managed_only", description="AEE contextual signals", axe_signal=True
+    ),
+}
+
+
+def get_overlay_dimensions() -> list[str]:
+    """Get list of dimensions available for overlay targeting."""
+    return [name for name, cap in TARGETING_CAPABILITIES.items() if cap.access in ["overlay", "both"]]
+
+
+def get_managed_only_dimensions() -> list[str]:
+    """Get list of dimensions that are managed-only."""
+    return [name for name, cap in TARGETING_CAPABILITIES.items() if cap.access == "managed_only"]
+
+
+def get_removed_dimensions() -> list[str]:
+    """Get list of dimensions that have been removed."""
+    return [name for name, cap in TARGETING_CAPABILITIES.items() if cap.access == "removed"]
+
+
+def get_aee_signal_dimensions() -> list[str]:
+    """Get list of dimensions used for AEE signals."""
+    return [name for name, cap in TARGETING_CAPABILITIES.items() if cap.axe_signal]
+
+
+# Explicit mapping from Targeting field names to capability dimension names.
+# Used by validate_overlay_targeting() to check access control (managed-only
+# vs overlay) on known fields.  Both inclusion and exclusion variants map to
+# the same capability dimension.
+#
+# AdCP TargetingOverlay defines only the geo fields, frequency_cap, axe
+# segments, and property_list.  The device/OS/browser/media/audience fields
+# are seller extensions carried forward from the original seller engine —
+# standard ad-server dimensions that adapters actively support but AdCP has
+# not yet adopted.  See module docstring for details.
+FIELD_TO_DIMENSION: dict[str, str] = {
+    # ── AdCP-defined fields (from adcp.types.TargetingOverlay) ───────────
+    "geo_countries": "geo_country",
+    "geo_regions": "geo_region",
+    "geo_metros": "geo_metro",
+    "geo_postal_areas": "geo_zip",
+    "frequency_cap": "frequency_cap",
+    # ── Geo exclusion extensions (PR #1006, not yet in AdCP) ─────────────
+    "geo_countries_exclude": "geo_country",
+    "geo_regions_exclude": "geo_region",
+    "geo_metros_exclude": "geo_metro",
+    "geo_postal_areas_exclude": "geo_zip",
+    # ── Seller extensions (not in AdCP, consumed by adapters) ────────────
+    "device_type_any_of": "device_type",
+    "device_type_none_of": "device_type",
+    "os_any_of": "os",
+    "os_none_of": "os",
+    "browser_any_of": "browser",
+    "browser_none_of": "browser",
+    "content_cat_any_of": "content_category",
+    "content_cat_none_of": "content_category",
+    "media_type_any_of": "media_type",
+    "media_type_none_of": "media_type",
+    "audiences_any_of": "audience_segment",
+    "audiences_none_of": "audience_segment",
+    "custom": "custom",
+    # ── Removed dimensions ───────────────────────────────────────────────
+    "geo_city_any_of": "geo_city",
+    "geo_city_none_of": "geo_city",
+    # ── Managed-only (not exposed via overlay) ───────────────────────────
+    "key_value_pairs": "key_value_pairs",
+}
+
+
+def validate_unknown_targeting_fields(targeting_obj: Any) -> list[str]:
+    """Reject unknown fields in a Targeting object via model_extra inspection.
+
+    Pydantic's extra='allow' accepts any field — unknown buyer fields (typos,
+    bogus names) land in model_extra.  This function checks model_extra and
+    reports them as unknown targeting fields.
+
+    This is separate from validate_overlay_targeting() which checks access
+    control (managed-only vs overlay) on *known* fields.
+
+    Returns list of violation messages for unknown fields.
+    """
+    model_extra = getattr(targeting_obj, "model_extra", None)
+    if not model_extra:
+        return []
+    return [f"{key} is not a recognized targeting field" for key in model_extra]
+
+
+def validate_overlay_targeting(targeting: Targeting) -> list[str]:
+    """Validate that targeting only uses allowed overlay dimensions.
+
+    Checks the Targeting model's fields directly instead of iterating a
+    serialized dict.  This makes the validation actually effective — the
+    previous dict-based approach missed managed-only fields (excluded by
+    model_dump) and removed fields (consumed by the normalizer).
+
+    Returns list of violations (managed-only or removed dimensions used).
+    """
+    violations = []
+
+    # Managed-only: key_value_pairs is a seller extension, not settable via overlay
+    if targeting.key_value_pairs is not None:
+        violations.append("key_value_pairs is managed-only and cannot be set via overlay")
+
+    # Removed: city targeting was removed in v3. The normalizer consumes
+    # geo_city_any_of/geo_city_none_of and sets had_city_targeting=True.
+    if targeting.had_city_targeting:
+        violations.append("City targeting is not supported (targeting dimension 'geo_city' has been removed)")
+
+    return violations
+
+
+# Geo inclusion/exclusion field pairs for same-value overlap detection.
+# Per adcp PR #1010: sellers SHOULD reject when the same value appears in both
+# the inclusion and exclusion field at the same level.
+_GEO_SIMPLE_PAIRS: list[tuple[str, str]] = [
+    ("geo_countries", "geo_countries_exclude"),
+    ("geo_regions", "geo_regions_exclude"),
+]
+_GEO_STRUCTURED_PAIRS: list[tuple[str, str]] = [
+    ("geo_metros", "geo_metros_exclude"),
+    ("geo_postal_areas", "geo_postal_areas_exclude"),
+]
+
+
+def _extract_simple_values(items: list) -> set[str]:
+    """Extract string values from a list of GeoCountry/GeoRegion (RootModel[str]) or plain strings."""
+    return {getattr(item, "root", item) for item in items}
+
+
+def _extract_system_values(items: list) -> dict[str, set[str]]:
+    """Extract {system: set(values)} from a list of GeoMetro/GeoPostalArea objects or dicts."""
+    from adcp.types import GeoMetro, GeoPostalArea
+
+    from src.core.validation_helpers import resolve_enum_value
+
+    by_system: dict[str, set[str]] = {}
+    for item in items:
+        if isinstance(item, (GeoMetro, GeoPostalArea)):
+            system = resolve_enum_value(item.system)
+            vals = set(item.values)
+        elif isinstance(item, dict):
+            system = resolve_enum_value(item.get("system", ""))
+            vals = set(item.get("values", []))
+        else:
+            continue
+        by_system.setdefault(system, set()).update(vals)
+    return by_system
+
+
+def validate_geo_overlap(targeting: Targeting) -> list[str]:
+    """Reject same-value overlap between geo inclusion and exclusion fields.
+
+    Per AdCP spec (adcp PR #1010): sellers SHOULD reject requests where the
+    same value appears in both the inclusion and exclusion field at the same
+    level (e.g., geo_countries: ["US"] with geo_countries_exclude: ["US"]).
+
+    Returns list of violation messages.
+    """
+    violations: list[str] = []
+
+    # Simple fields: countries, regions (RootModel[str] or plain strings)
+    for include_field, exclude_field in _GEO_SIMPLE_PAIRS:
+        include_vals = getattr(targeting, include_field, None)
+        exclude_vals = getattr(targeting, exclude_field, None)
+        if not include_vals or not exclude_vals:
+            continue
+        inc_set = _extract_simple_values(include_vals)
+        exc_set = _extract_simple_values(exclude_vals)
+        overlap = sorted(inc_set & exc_set)
+        if overlap:
+            violations.append(
+                f"{include_field}/{exclude_field} conflict: "
+                f"values {', '.join(overlap)} appear in both inclusion and exclusion"
+            )
+
+    # Structured fields: metros, postal_areas (system + values)
+    for include_field, exclude_field in _GEO_STRUCTURED_PAIRS:
+        include_vals = getattr(targeting, include_field, None)
+        exclude_vals = getattr(targeting, exclude_field, None)
+        if not include_vals or not exclude_vals:
+            continue
+        inc_by_system = _extract_system_values(include_vals)
+        exc_by_system = _extract_system_values(exclude_vals)
+        for system in sorted(set(inc_by_system) & set(exc_by_system)):
+            overlap = sorted(inc_by_system[system] & exc_by_system[system])
+            if overlap:
+                violations.append(
+                    f"{include_field}/{exclude_field} conflict in system '{system}': "
+                    f"values {', '.join(overlap)} appear in both inclusion and exclusion"
+                )
+
+    return violations

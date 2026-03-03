@@ -6,6 +6,7 @@ import { auditLogs } from "../../../db/schema/auditLogs.js";
 import { contexts } from "../../../db/schema/contexts.js";
 import { tenants } from "../../../db/schema/tenants.js";
 import { workflowSteps } from "../../../db/schema/workflowSteps.js";
+import { requireTenantAccess } from "../../services/authGuard.js";
 import { getAdminSession } from "../../services/sessionService.js";
 
 const defaultPolicySettings = {
@@ -105,6 +106,7 @@ const policyPagesRoute: FastifyPluginAsync = async (fastify: FastifyInstance) =>
 
   fastify.get("/tenant/:id/policy/", async (request, reply) => {
     const { id } = request.params as { id: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
     const session = getAdminSession(request);
     if (!session.user) return reply.code(401).send({ error: "UNAUTHENTICATED" });
     if (session.role === "viewer") return reply.code(403).send({ error: "Access denied" });
@@ -119,6 +121,7 @@ const policyPagesRoute: FastifyPluginAsync = async (fastify: FastifyInstance) =>
 
   fastify.get("/tenant/:id/policy/rules", async (request, reply) => {
     const { id } = request.params as { id: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
     const session = getAdminSession(request);
     if (!session.user) return reply.code(401).send({ error: "UNAUTHENTICATED" });
     if (session.role === "viewer") return reply.code(403).send({ error: "Access denied" });

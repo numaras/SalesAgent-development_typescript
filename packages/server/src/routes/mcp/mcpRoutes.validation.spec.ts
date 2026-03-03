@@ -6,6 +6,7 @@ import completeTaskRoute from "./completeTask.js";
 import createMediaBuyRoute from "./createMediaBuy.js";
 import getAdcpCapabilitiesRoute from "./getAdcpCapabilities.js";
 import getMediaBuyDeliveryRoute from "./getMediaBuyDelivery.js";
+import getMediaBuysRoute from "./getMediaBuys.js";
 import getProductsRoute from "./getProducts.js";
 import getTaskRoute from "./getTask.js";
 import listAuthorizedPropertiesRoute from "./listAuthorizedProperties.js";
@@ -110,6 +111,11 @@ vi.mock("../../services/capabilitiesService.js", () => ({
   getAdcpCapabilities: (...args: unknown[]) => mockGetAdcpCapabilities(...args),
 }));
 
+const mockListMediaBuys = vi.fn();
+vi.mock("../../services/mediaBuyListService.js", () => ({
+  listMediaBuys: (...args: unknown[]) => mockListMediaBuys(...args),
+}));
+
 const TENANT = { tenantId: "tenant-1", name: "Tenant 1" };
 
 async function createMcpApp(
@@ -191,6 +197,13 @@ beforeEach(() => {
   mockGetAdcpCapabilities.mockResolvedValue({
     adcp: { major_versions: [{ root: 3 }] },
     supported_protocols: ["media_buy"],
+  });
+  mockListMediaBuys.mockResolvedValue({
+    media_buys: [],
+    total: 0,
+    offset: 0,
+    limit: 20,
+    has_more: false,
   });
 });
 
@@ -336,6 +349,64 @@ describe("MCP route validation coverage", () => {
     await app.close();
 
     expect(res.statusCode).toBe(200);
+  });
+
+  it("POST /mcp/get-media-buys returns 401 without auth", async () => {
+    const app = await createMcpApp(getMediaBuysRoute);
+    const res = await app.inject({
+      method: "POST",
+      url: "/mcp/get-media-buys",
+      payload: {},
+    });
+    await app.close();
+
+    expect(res.statusCode).toBe(401);
+    expect(mockListMediaBuys).not.toHaveBeenCalled();
+  });
+
+  it("POST /mcp/get-media-buys returns 400 for invalid body schema", async () => {
+    const app = await createMcpApp(getMediaBuysRoute, { withAuth: true });
+    const res = await app.inject({
+      method: "POST",
+      url: "/mcp/get-media-buys",
+      payload: { media_buy_ids: "not-an-array" },
+    });
+    await app.close();
+
+    expect(res.statusCode).toBe(400);
+    expect(mockListMediaBuys).not.toHaveBeenCalled();
+  });
+
+  it("POST /mcp/get-media-buys returns 200 for valid empty payload", async () => {
+    const app = await createMcpApp(getMediaBuysRoute, { withAuth: true });
+    const res = await app.inject({
+      method: "POST",
+      url: "/mcp/get-media-buys",
+      payload: {},
+    });
+    await app.close();
+
+    expect(res.statusCode).toBe(200);
+    expect(mockListMediaBuys).toHaveBeenCalled();
+    expect(res.json()).toMatchObject({ media_buys: [], total: 0, has_more: false });
+  });
+
+  it("POST /mcp/get-media-buys returns 200 for valid payload with filters", async () => {
+    const app = await createMcpApp(getMediaBuysRoute, { withAuth: true });
+    const res = await app.inject({
+      method: "POST",
+      url: "/mcp/get-media-buys",
+      payload: {
+        media_buy_ids: ["mb-1"],
+        status_filter: "active",
+        limit: 10,
+        offset: 0,
+      },
+    });
+    await app.close();
+
+    expect(res.statusCode).toBe(200);
+    expect(mockListMediaBuys).toHaveBeenCalled();
   });
 
   it("POST /mcp/list-creatives returns 401 without auth", async () => {

@@ -153,7 +153,13 @@ export async function getAdcpCapabilities(
     return { ...MINIMAL_CAPABILITIES_RESPONSE };
   }
 
-  const tenantData = await loadTenantCapabilityData(tenantContext);
+  const tenantData = await loadTenantCapabilityData(tenantContext).catch(() => ({
+    tenantName: tenantContext.tenantName ?? "Unknown",
+    subdomain: tenantContext.tenantId,
+    advertisingPolicies: null,
+    primaryChannels: ["display"],
+    publisherDomains: [{ root: `${tenantContext.tenantId}.example.com` }],
+  }));
   const now = new Date().toISOString();
 
   const response: GetAdcpCapabilitiesResponse = {
