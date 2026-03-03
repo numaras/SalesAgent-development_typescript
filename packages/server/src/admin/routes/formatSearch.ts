@@ -294,6 +294,10 @@ const formatSearchRoute: FastifyPluginAsync = async (fastify: FastifyInstance) =
       let formats = result.formats;
       if (typeFilter) formats = formats.filter((f) => f.type?.toLowerCase() === typeFilter);
 
+      // source: "live" if agent responded without errors, "fallback" if defaults were used
+      const source: "live" | "fallback" =
+        result.errors && result.errors.length > 0 ? "fallback" : "live";
+
       const byAgent: Record<string, Array<{
         format_id: { id: string; agent_url: string };
         name: string;
@@ -322,7 +326,7 @@ const formatSearchRoute: FastifyPluginAsync = async (fastify: FastifyInstance) =
         });
       }
 
-      return reply.send({ agents: byAgent, total_formats: formats.length });
+      return reply.send({ agents: byAgent, total_formats: formats.length, source });
     } catch (err: unknown) {
       return reply.code(500).send({ error: String((err as Error).message ?? err) });
     }

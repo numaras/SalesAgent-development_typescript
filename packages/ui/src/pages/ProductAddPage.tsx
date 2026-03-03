@@ -343,6 +343,7 @@ function ProductAddContent() {
   const [selectedFormats, setSelectedFormats] = useState<Array<{ id: string; agent_url: string }>>([]);
   const [availableFormats, setAvailableFormats] = useState<Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>>([]);
   const [formatsLoading, setFormatsLoading] = useState(false);
+  const [formatsSource, setFormatsSource] = useState<"live" | "fallback" | null>(null);
 
   // Adapter-specific config state
   const [mockCfg, setMockCfg] = useState<MockConfig>({
@@ -385,10 +386,11 @@ function ProductAddContent() {
     setFormatsLoading(true);
     fetch(`/api/formats/list?tenant_id=${encodeURIComponent(id)}`, { credentials: "include" })
       .then((res) => res.ok ? res.json() : null)
-      .then((data: { agents?: Record<string, Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>> } | null) => {
+      .then((data: { agents?: Record<string, Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>>; source?: "live" | "fallback" } | null) => {
         if (!data?.agents) return;
         const all = Object.values(data.agents).flat();
         setAvailableFormats(all);
+        setFormatsSource(data.source ?? null);
         // Pre-select standard display formats
         const defaults = all.filter((f) => f.format_id.id.startsWith("display_"));
         if (defaults.length > 0) setSelectedFormats(defaults.slice(0, 1).map((f) => f.format_id));
@@ -487,7 +489,21 @@ function ProductAddContent() {
           />
         </label>
         <div>
-          <div style={{ fontWeight: 500, marginBottom: "0.35rem" }}>Creative Formats *</div>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.35rem" }}>
+            <span style={{ fontWeight: 500 }}>Creative Formats *</span>
+            {formatsSource && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.72rem", fontWeight: 600 }}>
+                <span style={{
+                  width: 7, height: 7, borderRadius: "50%", display: "inline-block",
+                  background: formatsSource === "live" ? "#00e5a0" : "#f59e0b",
+                  boxShadow: formatsSource === "live" ? "0 0 5px #00e5a0" : "0 0 5px #f59e0b",
+                }} />
+                <span style={{ color: formatsSource === "live" ? "#00e5a0" : "#f59e0b" }}>
+                  {formatsSource === "live" ? "live" : "cached"}
+                </span>
+              </span>
+            )}
+          </div>
           {formatsLoading ? (
             <p style={{ color: "#666", fontSize: "0.875rem" }}>Loading formats…</p>
           ) : availableFormats.length === 0 ? (
