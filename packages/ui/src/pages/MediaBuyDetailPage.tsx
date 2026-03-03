@@ -8,6 +8,7 @@ import {
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import { BaseLayout } from "../components/BaseLayout";
 import { PrivateRoute } from "../components/PrivateRoute";
 
@@ -147,6 +148,7 @@ function MediaBuyDetailContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
+  const [activating, setActivating] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -168,6 +170,30 @@ function MediaBuyDetailContent() {
   }, [id, mbId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const handleActivate = async () => {
+    if (!id || !mbId) return;
+    setActivating(true);
+    setActionMsg(null);
+    try {
+      const res = await fetch(`/tenant/${id}/media-buy/${encodeURIComponent(mbId)}/activate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const json = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; message?: string };
+      if (json.success) {
+        setActionMsg({ type: "success", text: json.message ?? "Campaign activated." });
+        await load();
+      } else {
+        setActionMsg({ type: "error", text: json.error ?? "Activation failed." });
+      }
+    } catch (e) {
+      setActionMsg({ type: "error", text: e instanceof Error ? e.message : "Request failed" });
+    } finally {
+      setActivating(false);
+    }
+  };
 
   const handleApprove = async (action: "approve" | "reject") => {
     if (!id || !mbId) return;
@@ -253,6 +279,25 @@ function MediaBuyDetailContent() {
         <Alert severity="warning" sx={{ mb: 2 }}>
           <strong>Blocking issues:</strong> {readiness.blocking_issues.join(" · ")}
         </Alert>
+      )}
+
+      {/* Direct activate for draft/pending campaigns without a workflow step */}
+      {!pending_approval_step && ["draft", "pending", "pending_activation", "ready"].includes(mb.status) && (
+        <Paper sx={{ p: 2, mb: 3, border: "1px solid rgba(0,212,255,0.3)", background: "rgba(0,212,255,0.04)" }}>
+          <Typography variant="subtitle2" sx={{ color: "primary.main", mb: 1 }}>
+            This campaign is in <strong>{mb.status}</strong> status. Activate it to start delivery.
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            startIcon={<PlayArrowIcon />}
+            disabled={activating}
+            onClick={handleActivate}
+          >
+            {activating ? "Activating…" : "Activate Campaign"}
+          </Button>
+        </Paper>
       )}
 
       {/* Pending approval actions */}

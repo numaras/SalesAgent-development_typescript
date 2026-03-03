@@ -287,6 +287,57 @@ const mediaBuyActionsRoute: FastifyPluginAsync = async (fastify: FastifyInstance
       webhook_status: result.status,
     });
   });
+
+  // Direct activation for draft/pending campaigns (no workflow step required).
+  fastify.post("/tenant/:id/media-buy/:mbId/activate", async (request, reply) => {
+    const { id, mbId } = request.params as { id: string; mbId: string };
+    if (!(await requireTenantAccess(request, reply, id))) return;
+    request.auditOperation = "activate_media_buy";
+
+    const session = getAdminSession(request);
+    const userEmail = typeof session.user === "string" ? session.user : "admin";
+
+    const [mediaBuy] = await db
+      .select()
+      .from(mediaBuys)
+      .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.mediaBuyId, mbId)))
+      .limit(1);
+
+    if (!mediaBuy) return reply.code(404).send({ error: "Media buy not found" });
+
+    const allowedStatuses = ["draft", "pending", "pending_activation", "ready"];
+    if (!allowedStatuses.includes(mediaBuy.status)) {
+      return reply.code(400).send({
+        error: `Cannot activate a campaign with status '${mediaBuy.status}'.`,
+      });
+    }
+
+    const now = new Date();
+    let newStatus = "active";
+    if (mediaBuy.startTime && now < mediaBuy.startTime) newStatus = "scheduled";
+    if (mediaBuy.endTime && now > mediaBuy.endTime) newStatus = "completed";
+
+    await db
+      .update(mediaBuys)
+      .set({ status: newStatus, approvedAt: now, approvedBy: userEmail, updatedAt: now })
+      .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.mediaBuyId, mbId)));
+
+    const execution = await executeApprovedMediaBuyViaAdapter(
+      { tenantId: id, principalId: mediaBuy.principalId },
+      mbId,
+      mediaBuy.rawRequest,
+    );
+
+    if (!execution.success) {
+      await db
+        .update(mediaBuys)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.mediaBuyId, mbId)));
+      return reply.code(500).send({ success: false, error: `Activation failed: ${execution.error}` });
+    }
+
+    return reply.send({ success: true, message: `Campaign activated (${newStatus}).`, status: newStatus });
+  });
 };
 
 export default mediaBuyActionsRoute;
