@@ -96,6 +96,10 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
       .select({ count: sql<number>`count(*)::int` })
       .from(mediaBuys)
       .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.status, "active")));
+    const [scheduledCampaigns] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(mediaBuys)
+      .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.status, "scheduled")));
     const [totalSpend] = await db
       .select({ total: sql<string>`coalesce(sum(${mediaBuys.budget}), 0)` })
       .from(mediaBuys)
@@ -194,6 +198,7 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
       tenant_id: id,
       metrics: {
         live_buys: activeCampaigns?.count ?? 0,
+        scheduled_buys: scheduledCampaigns?.count ?? 0,
         total_revenue: Number(totalSpend?.total ?? 0),
         total_advertisers: principalsCount?.count ?? 0,
         active_advertisers: principalsCount?.count ?? 0,
