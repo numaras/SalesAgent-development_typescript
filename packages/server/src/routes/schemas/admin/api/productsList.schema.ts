@@ -8,7 +8,7 @@ import {
 const productSummarySchema = z.object({
   product_id: z.string(),
   name: z.string(),
-  description: z.string(),
+  description: z.string().nullable().optional(),
   delivery_type: z.string(),
 });
 
