@@ -225,10 +225,11 @@ async function invokeCreateAdapter(
  * Python equivalent: session.add(MediaBuy(...)) + session.add_all([MediaPackage(...)]) +
  *   context_manager.link_object(step_id, "media_buy", media_buy_id)
  */
-async function persistMediaBuy(
+export async function persistMediaBuy(
   ctx: MediaBuyCreateContext,
   request: CreateMediaBuyRequest,
   normalized: CreateMediaBuySuccess,
+  overrideStatus?: string,
 ): Promise<void> {
   const mediaBuyId = normalized.media_buy_id ?? buildGeneratedMediaBuyId(ctx);
   const advertiserName = extractAdvertiserName(request);
@@ -253,7 +254,7 @@ async function persistMediaBuy(
     endDate: endVal.toISOString().slice(0, 10),
     startTime: startVal,
     endTime: endVal,
-    status: "draft",
+    status: overrideStatus ?? "draft",
     rawRequest: request as unknown as Record<string, unknown>,
   });
 

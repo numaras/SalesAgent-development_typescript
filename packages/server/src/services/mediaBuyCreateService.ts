@@ -21,7 +21,7 @@ import type {
   CreateMediaBuyResponse,
   CreateMediaBuySuccess,
 } from "../schemas/mediaBuyCreateResponse.js";
-import { createMediaBuyViaAdapter } from "./mediaBuyAdapterCall.js";
+import { createMediaBuyViaAdapter, persistMediaBuy } from "./mediaBuyAdapterCall.js";
 import { createWorkflowStep, updateWorkflowStep } from "./workflowStepService.js";
 
 export interface MediaBuyCreateContext {
@@ -400,17 +400,32 @@ export async function createMediaBuy(
       return currencyError;
     }
 
-    // When human approval is required, skip the adapter call — the campaign waits
-    // in the Workflows queue for admin review via the Workflows UI.
+    // When human approval is required, persist the media buy with status
+    // "pending_approval" but skip the adapter call (no GAM order yet).
+    // The record appears on the dashboard and the workflow step links to it.
     if (requiresHumanApproval) {
-      const success: CreateMediaBuySuccess = {
-        media_buy_id: `pending_${stepId}`,
+      const ts = Date.now();
+      const mediaBuyId = `mb_${ctx.tenantId}_${ctx.principalId}_${ts}`;
+      const pendingNormalized: CreateMediaBuySuccess = {
+        media_buy_id: mediaBuyId,
         buyer_ref: parsed.buyer_ref ?? null,
-        packages: [],
+        packages: parsed.packages.map((_pkg, i) => ({
+          package_id: `pkg_${mediaBuyId}_${i + 1}`,
+          status: "pending_approval" as const,
+        })),
         workflow_step_id: stepId,
+      };
+      await persistMediaBuy(
+        { ...ctx, stepId },
+        parsed,
+        pendingNormalized,
+        "pending_approval",
+      );
+      await updateWorkflowStep(stepId, { status: "requires_approval" });
+      return {
+        ...pendingNormalized,
         message: "Campaign submitted for human approval. Review it in the Workflows page.",
       } as unknown as CreateMediaBuySuccess;
-      return success;
     }
 
     const adapterResponse = await createMediaBuyViaAdapter({ ...ctx, stepId }, parsed);
