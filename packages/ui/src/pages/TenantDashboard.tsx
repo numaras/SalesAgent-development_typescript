@@ -632,14 +632,16 @@ function TenantDashboardContent() {
   const activeAdv = metrics.active_advertisers ?? metrics.total_advertisers;
   const totalAdv = metrics.total_advertisers;
   const needsCre = (metrics as Record<string, unknown>).pending_creatives_review as number ?? metrics.needs_creatives ?? 0;
-  const needsApp = metrics.needs_approval ?? 0;
+  const needsApp = (metrics as Record<string, unknown>).pending_approval_buys as number ?? metrics.needs_approval ?? 0;
   const revChange = metrics.revenue_change ?? 0;
   const revChangeAbs = metrics.revenue_change_abs ?? 0;
 
-  // Go to creatives/review if the issue is pending creatives; else workflows
-  const attentionLink = needsCre > 0
+  // Priority: pending approvals → creatives → workflows
+  const attentionLink = needsApp > 0
+    ? `/tenant/${id}/workflows`
+    : needsCre > 0
     ? `/tenant/${id}/creatives/review`
-    : `/tenant/${id}/workflows${needsApp > 0 ? "?status=needs_approval" : ""}`;
+    : `/tenant/${id}/workflows`;
 
   const goToMediaBuy = (mb: MediaBuy) => {
     if (mb.media_buy_id) navigate(`/tenant/${id}/media-buy/${mb.media_buy_id}`);
@@ -720,10 +722,12 @@ function TenantDashboardContent() {
             accentColor={needsAtten > 0 ? "#ff4560" : "#00e5a0"}
             to={attentionLink}
             sub={
-              needsCre > 0
-                ? <Typography variant="caption" sx={{ color: "warning.main", fontWeight: 600 }}>{needsCre} creative{needsCre > 1 ? "s" : ""} pending review</Typography>
+              needsApp > 0 && needsCre > 0
+                ? <Typography variant="caption" sx={{ color: "warning.main", fontWeight: 600 }}>{needsApp} campaign{needsApp > 1 ? "s" : ""} · {needsCre} creative{needsCre > 1 ? "s" : ""}</Typography>
                 : needsApp > 0
-                ? <Typography variant="caption" sx={{ color: "warning.main", fontWeight: 600 }}>{needsApp} need approval</Typography>
+                ? <Typography variant="caption" sx={{ color: "warning.main", fontWeight: 600 }}>{needsApp} campaign{needsApp > 1 ? "s" : ""} pending approval</Typography>
+                : needsCre > 0
+                ? <Typography variant="caption" sx={{ color: "warning.main", fontWeight: 600 }}>{needsCre} creative{needsCre > 1 ? "s" : ""} pending review</Typography>
                 : <Typography variant="caption" sx={{ color: "success.main", fontWeight: 600 }}>All systems ready</Typography>
             }
           />

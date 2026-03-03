@@ -110,11 +110,15 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
         ),
       );
 
-    // Needs attention: failed buys + pending_review creatives
+    // Needs attention: failed buys + pending_approval campaigns + pending creatives
     const [failedBuys] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(mediaBuys)
       .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.status, "failed")));
+    const [pendingApprovalBuys] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(mediaBuys)
+      .where(and(eq(mediaBuys.tenantId, id), eq(mediaBuys.status, "pending_approval")));
     const [pendingCreatives] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(creatives)
@@ -126,7 +130,8 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
       );
     const pendingCreativesCount = pendingCreatives?.count ?? 0;
     const failedBuysCount = failedBuys?.count ?? 0;
-    const needsAttention = failedBuysCount + pendingCreativesCount;
+    const pendingApprovalCount = pendingApprovalBuys?.count ?? 0;
+    const needsAttention = failedBuysCount + pendingApprovalCount + pendingCreativesCount;
 
     // Revenue trend (30 days) for chart and revenue_change
     const activeBuys = await db
@@ -209,6 +214,7 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
         products_count: productsCount?.count ?? 0,
         needs_attention: needsAttention,
         pending_creatives_review: pendingCreativesCount,
+        pending_approval_buys: pendingApprovalCount,
         failed_buys: failedBuysCount,
         revenue_change: revenueChange,
         revenue_change_abs: Math.abs(revenueChange),
