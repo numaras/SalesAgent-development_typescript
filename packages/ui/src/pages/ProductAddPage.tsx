@@ -340,7 +340,9 @@ function ProductAddContent() {
   const [description, setDescription] = useState("");
   const [productId, setProductId] = useState("");
   const [pricingOptionsJson, setPricingOptionsJson] = useState('[{"pricing_option_id":"opt-1","pricing_model":"cpm","currency":"USD","fixed_price":5}]');
-  const [formatsJson, setFormatsJson] = useState('[{"id":"display_300x250","agent_url":"https://creative.adcontextprotocol.org"}]');
+  const [selectedFormats, setSelectedFormats] = useState<Array<{ id: string; agent_url: string }>>([]);
+  const [availableFormats, setAvailableFormats] = useState<Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>>([]);
+  const [formatsLoading, setFormatsLoading] = useState(false);
 
   // Adapter-specific config state
   const [mockCfg, setMockCfg] = useState<MockConfig>({
@@ -378,6 +380,23 @@ function ProductAddContent() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  useEffect(() => {
+    if (!id) return;
+    setFormatsLoading(true);
+    fetch(`/api/formats/list?tenant_id=${encodeURIComponent(id)}`, { credentials: "include" })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: { agents?: Record<string, Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>> } | null) => {
+        if (!data?.agents) return;
+        const all = Object.values(data.agents).flat();
+        setAvailableFormats(all);
+        // Pre-select standard display formats
+        const defaults = all.filter((f) => f.format_id.id.startsWith("display_"));
+        if (defaults.length > 0) setSelectedFormats(defaults.slice(0, 1).map((f) => f.format_id));
+      })
+      .catch(() => undefined)
+      .finally(() => setFormatsLoading(false));
+  }, [id]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id || !ctx) return;
@@ -395,16 +414,6 @@ function ProductAddContent() {
 
       const implConfig = buildImplConfig(ctx.adapter_type, mockCfg, gamCfg, broadstreetCfg);
 
-      let formats: Record<string, unknown>[];
-      try {
-        formats = JSON.parse(formatsJson) as Record<string, unknown>[];
-        if (!Array.isArray(formats) || formats.length === 0) throw new Error("Need at least one format");
-      } catch {
-        setError("Invalid formats JSON (array with at least one object containing id and agent_url)");
-        setSubmitting(false);
-        return;
-      }
-
       const res = await fetch(`/tenant/${id}/products/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -413,7 +422,7 @@ function ProductAddContent() {
           name: name.trim(),
           description: description.trim() || undefined,
           product_id: productId.trim() || undefined,
-          formats,
+          formats: selectedFormats,
           pricing_options: pricingOptions,
           countries: [],
           channels: [],
@@ -477,16 +486,41 @@ function ProductAddContent() {
             style={{ display: "block", width: "100%", marginTop: "0.25rem" }}
           />
         </label>
-        <label>
-          Formats (JSON array) *
-          <textarea
-            value={formatsJson}
-            onChange={(e) => setFormatsJson(e.target.value)}
-            rows={3}
-            style={{ fontFamily: "monospace", display: "block", width: "100%", marginTop: "0.25rem" }}
-          />
-          <small style={{ color: "#666" }}>Each entry needs <code>id</code> and <code>agent_url</code>. Common IDs: display_300x250, display_728x90, display_320x50</small>
-        </label>
+        <div>
+          <div style={{ fontWeight: 500, marginBottom: "0.35rem" }}>Creative Formats *</div>
+          {formatsLoading ? (
+            <p style={{ color: "#666", fontSize: "0.875rem" }}>Loading formats…</p>
+          ) : availableFormats.length === 0 ? (
+            <p style={{ color: "#888", fontSize: "0.875rem" }}>No formats available (using default display_300x250)</p>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
+              {availableFormats.map((f) => {
+                const key = `${f.format_id.agent_url}::${f.format_id.id}`;
+                const checked = selectedFormats.some((s) => s.id === f.format_id.id && s.agent_url === f.format_id.agent_url);
+                return (
+                  <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.875rem", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedFormats((prev) => [...prev, f.format_id]);
+                        } else {
+                          setSelectedFormats((prev) => prev.filter((s) => !(s.id === f.format_id.id && s.agent_url === f.format_id.agent_url)));
+                        }
+                      }}
+                    />
+                    <span>
+                      <strong>{f.name}</strong>
+                      {f.dimensions && <span style={{ color: "#888", marginLeft: "0.3rem" }}>({f.dimensions})</span>}
+                      <span style={{ color: "#aaa", marginLeft: "0.3rem", fontSize: "0.75rem" }}>{f.type}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <label>
           Pricing options (JSON array) *
           <textarea
