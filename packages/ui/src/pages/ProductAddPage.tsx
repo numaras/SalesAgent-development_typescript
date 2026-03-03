@@ -344,6 +344,7 @@ function ProductAddContent() {
   const [availableFormats, setAvailableFormats] = useState<Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>>([]);
   const [formatsLoading, setFormatsLoading] = useState(false);
   const [formatsSource, setFormatsSource] = useState<"live" | "fallback" | null>(null);
+  const [formatsError, setFormatsError] = useState<string | null>(null);
 
   // Adapter-specific config state
   const [mockCfg, setMockCfg] = useState<MockConfig>({
@@ -386,11 +387,14 @@ function ProductAddContent() {
     setFormatsLoading(true);
     fetch(`/api/formats/list?tenant_id=${encodeURIComponent(id)}`, { credentials: "include" })
       .then((res) => res.ok ? res.json() : null)
-      .then((data: { agents?: Record<string, Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>>; source?: "live" | "fallback" } | null) => {
+      .then((data: { agents?: Record<string, Array<{ format_id: { id: string; agent_url: string }; name: string; type: string; dimensions: string | null }>>; source?: "live" | "fallback"; errors?: Array<{ error?: string }> } | null) => {
         if (!data?.agents) return;
         const all = Object.values(data.agents).flat();
         setAvailableFormats(all);
         setFormatsSource(data.source ?? null);
+        if (data.errors && data.errors.length > 0) {
+          setFormatsError(data.errors.map((e) => e.error ?? String(e)).join("; "));
+        }
         // Pre-select standard display formats
         const defaults = all.filter((f) => f.format_id.id.startsWith("display_"));
         if (defaults.length > 0) setSelectedFormats(defaults.slice(0, 1).map((f) => f.format_id));
@@ -498,7 +502,10 @@ function ProductAddContent() {
                   background: formatsSource === "live" ? "#00e5a0" : "#f59e0b",
                   boxShadow: formatsSource === "live" ? "0 0 5px #00e5a0" : "0 0 5px #f59e0b",
                 }} />
-                <span style={{ color: formatsSource === "live" ? "#00e5a0" : "#f59e0b" }}>
+                <span
+                  style={{ color: formatsSource === "live" ? "#00e5a0" : "#f59e0b", cursor: formatsError ? "help" : "default" }}
+                  title={formatsError ?? undefined}
+                >
                   {formatsSource === "live" ? "live" : "cached"}
                 </span>
               </span>

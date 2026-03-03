@@ -326,7 +326,12 @@ const formatSearchRoute: FastifyPluginAsync = async (fastify: FastifyInstance) =
         });
       }
 
-      return reply.send({ agents: byAgent, total_formats: formats.length, source });
+      return reply.send({
+        agents: byAgent,
+        total_formats: formats.length,
+        source,
+        errors: result.errors ?? [],
+      });
     } catch (err: unknown) {
       return reply.code(500).send({ error: String((err as Error).message ?? err) });
     }
