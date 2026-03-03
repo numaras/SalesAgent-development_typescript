@@ -84,9 +84,16 @@ function CreativesListContent() {
     <BaseLayout tenantId={id} tenantName={tenantName}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem", flexWrap: "wrap", gap: "0.75rem" }}>
         <h1 style={{ fontFamily: "system-ui", margin: 0 }}>Creatives</h1>
-        <Link to={`/tenant/${id}/creatives/add`} style={{ background: "rgba(0,212,255,0.12)", color: "#00d4ff", border: "1px solid rgba(0,212,255,0.3)", borderRadius: 6, padding: "0.4rem 1rem", fontWeight: 600, fontSize: "0.875rem", textDecoration: "none" }}>
-          + Upload Creative
-        </Link>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {creatives.some((c) => c.status === "pending_review" || c.status === "pending") && (
+            <Link to={`/tenant/${id}/creatives/review`} style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 6, padding: "0.4rem 1rem", fontWeight: 600, fontSize: "0.875rem", textDecoration: "none" }}>
+              ⚠ Review Queue ({creatives.filter((c) => c.status === "pending_review" || c.status === "pending").length})
+            </Link>
+          )}
+          <Link to={`/tenant/${id}/creatives/add`} style={{ background: "rgba(0,212,255,0.12)", color: "#00d4ff", border: "1px solid rgba(0,212,255,0.3)", borderRadius: 6, padding: "0.4rem 1rem", fontWeight: 600, fontSize: "0.875rem", textDecoration: "none" }}>
+            + Upload Creative
+          </Link>
+        </div>
       </div>
       <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
         <input
@@ -113,25 +120,45 @@ function CreativesListContent() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "system-ui" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid #eee" }}>
-                <th style={{ textAlign: "left", padding: "0.5rem" }}>ID</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Name</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Format</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Status</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Principal</th>
                 <th style={{ textAlign: "left", padding: "0.5rem" }}>Created</th>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {slice.map((c) => (
-                <tr key={c.creative_id} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "0.5rem" }}>{c.creative_id}</td>
-                  <td style={{ padding: "0.5rem" }}>{c.name}</td>
-                  <td style={{ padding: "0.5rem" }}>{c.format}</td>
-                  <td style={{ padding: "0.5rem" }}>{c.status}</td>
-                  <td style={{ padding: "0.5rem" }}>{c.principal_name}</td>
-                  <td style={{ padding: "0.5rem" }}>{c.created_at ? new Date(c.created_at).toLocaleDateString() : "—"}</td>
-                </tr>
-              ))}
+              {slice.map((c) => {
+                const isPending = c.status === "pending_review" || c.status === "pending";
+                const statusColor = isPending ? "#f59e0b" : c.status === "approved" ? "#00e5a0" : c.status === "rejected" ? "#ff4560" : "#7da0c0";
+                return (
+                  <tr key={c.creative_id} style={{ borderBottom: "1px solid #eee" }}>
+                    <td style={{ padding: "0.5rem" }}>
+                      <div>{c.name}</div>
+                      <div style={{ fontFamily: "monospace", fontSize: "0.7rem", color: "#666" }}>{c.creative_id}</div>
+                    </td>
+                    <td style={{ padding: "0.5rem" }}>{c.format}</td>
+                    <td style={{ padding: "0.5rem" }}>
+                      <span style={{ color: statusColor, fontWeight: 600, fontSize: "0.8rem" }}>
+                        {c.status.replace(/_/g, " ").toUpperCase()}
+                      </span>
+                    </td>
+                    <td style={{ padding: "0.5rem" }}>{c.principal_name}</td>
+                    <td style={{ padding: "0.5rem" }}>{c.created_at ? new Date(c.created_at).toLocaleDateString() : "—"}</td>
+                    <td style={{ padding: "0.5rem" }}>
+                      {isPending && (
+                        <Link
+                          to={`/tenant/${id}/creatives/review`}
+                          style={{ color: "#f59e0b", fontWeight: 600, fontSize: "0.8rem", textDecoration: "none", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 4, padding: "0.2rem 0.6rem" }}
+                        >
+                          Review
+                        </Link>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <p style={{ marginTop: "0.5rem" }}>
