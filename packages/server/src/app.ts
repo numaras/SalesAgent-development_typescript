@@ -23,6 +23,7 @@ import createMediaBuyRoute from "./routes/mcp/createMediaBuy.js";
 import getAdcpCapabilitiesRoute from "./routes/mcp/getAdcpCapabilities.js";
 import getMediaBuyDeliveryRoute from "./routes/mcp/getMediaBuyDelivery.js";
 import getMediaBuysRoute from "./routes/mcp/getMediaBuys.js";
+import mcpProtocolRoute from "./routes/mcp/mcpProtocol.js";
 import getProductsRoute from "./routes/mcp/getProducts.js";
 import getTaskRoute from "./routes/mcp/getTask.js";
 import listAuthorizedPropertiesRoute from "./routes/mcp/listAuthorizedProperties.js";
@@ -123,6 +124,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     await app.register(debugRoute);
 
     // MCP tool routes.
+    // MCP wire protocol endpoint (POST /mcp) — must be registered before the individual tool routes
+    await app.register(mcpProtocolRoute);
     await app.register(getAdcpCapabilitiesRoute, { prefix: "/mcp" });
     await app.register(getProductsRoute, { prefix: "/mcp" });
     await app.register(listCreativeFormatsRoute, { prefix: "/mcp" });
