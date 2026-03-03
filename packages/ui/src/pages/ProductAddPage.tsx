@@ -339,7 +339,8 @@ function ProductAddContent() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [productId, setProductId] = useState("");
-  const [pricingOptionsJson, setPricingOptionsJson] = useState('[{"currency":"USD","cpm":5,"is_fixed":true}]');
+  const [pricingOptionsJson, setPricingOptionsJson] = useState('[{"pricing_option_id":"opt-1","pricing_model":"cpm","currency":"USD","fixed_price":5}]');
+  const [formatsJson, setFormatsJson] = useState('[{"id":"display_300x250","agent_url":"https://creative.adcontextprotocol.org"}]');
 
   // Adapter-specific config state
   const [mockCfg, setMockCfg] = useState<MockConfig>({
@@ -394,6 +395,16 @@ function ProductAddContent() {
 
       const implConfig = buildImplConfig(ctx.adapter_type, mockCfg, gamCfg, broadstreetCfg);
 
+      let formats: Record<string, unknown>[];
+      try {
+        formats = JSON.parse(formatsJson) as Record<string, unknown>[];
+        if (!Array.isArray(formats) || formats.length === 0) throw new Error("Need at least one format");
+      } catch {
+        setError("Invalid formats JSON (array with at least one object containing id and agent_url)");
+        setSubmitting(false);
+        return;
+      }
+
       const res = await fetch(`/tenant/${id}/products/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -402,7 +413,7 @@ function ProductAddContent() {
           name: name.trim(),
           description: description.trim() || undefined,
           product_id: productId.trim() || undefined,
-          formats: [],
+          formats,
           pricing_options: pricingOptions,
           countries: [],
           channels: [],
@@ -467,13 +478,24 @@ function ProductAddContent() {
           />
         </label>
         <label>
+          Formats (JSON array) *
+          <textarea
+            value={formatsJson}
+            onChange={(e) => setFormatsJson(e.target.value)}
+            rows={3}
+            style={{ fontFamily: "monospace", display: "block", width: "100%", marginTop: "0.25rem" }}
+          />
+          <small style={{ color: "#666" }}>Each entry needs <code>id</code> and <code>agent_url</code>. Common IDs: display_300x250, display_728x90, display_320x50</small>
+        </label>
+        <label>
           Pricing options (JSON array) *
           <textarea
             value={pricingOptionsJson}
             onChange={(e) => setPricingOptionsJson(e.target.value)}
-            rows={4}
+            rows={3}
             style={{ fontFamily: "monospace", display: "block", width: "100%", marginTop: "0.25rem" }}
           />
+          <small style={{ color: "#666" }}>pricing_model must be lowercase: cpm, vcpm, cpc, flat_rate</small>
         </label>
 
         {/* Adapter-specific product_config sub-component */}
