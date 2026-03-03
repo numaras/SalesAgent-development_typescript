@@ -179,14 +179,13 @@ function MediaBuyDetailContent() {
       const res = await fetch(`/tenant/${id}/media-buy/${encodeURIComponent(mbId)}/activate`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
       });
       const json = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; message?: string };
       if (json.success) {
         setActionMsg({ type: "success", text: json.message ?? "Campaign activated." });
         await load();
       } else {
-        setActionMsg({ type: "error", text: json.error ?? "Activation failed." });
+        setActionMsg({ type: "error", text: json.message ?? json.error ?? "Activation failed." });
       }
     } catch (e) {
       setActionMsg({ type: "error", text: e instanceof Error ? e.message : "Request failed" });
@@ -211,7 +210,7 @@ function MediaBuyDetailContent() {
         setActionMsg({ type: "success", text: json.message ?? `Campaign ${action}d.` });
         await load();
       } else {
-        setActionMsg({ type: "error", text: json.error ?? "Action failed." });
+        setActionMsg({ type: "error", text: json.message ?? json.error ?? "Action failed." });
       }
     } catch (e) {
       setActionMsg({ type: "error", text: e instanceof Error ? e.message : "Request failed" });
