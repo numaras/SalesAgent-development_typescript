@@ -122,8 +122,10 @@ const creativePagesRoute: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
     const creativeList = creativeRows
       .sort((a, b) => {
-        if (a.status === "pending_review" && b.status !== "pending_review") return -1;
-        if (a.status !== "pending_review" && b.status === "pending_review") return 1;
+        const aPending = a.status === "pending_review" || a.status === "pending";
+        const bPending = b.status === "pending_review" || b.status === "pending";
+        if (aPending && !bPending) return -1;
+        if (!aPending && bPending) return 1;
         const aTs = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const bTs = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return bTs - aTs;

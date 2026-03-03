@@ -119,7 +119,10 @@ const tenantDashboardRoute: FastifyPluginAsync = async (
       .select({ count: sql<number>`count(*)::int` })
       .from(creatives)
       .where(
-        and(eq(creatives.tenantId, id), eq(creatives.status, "pending_review")),
+        and(
+          eq(creatives.tenantId, id),
+          inArray(creatives.status, ["pending_review", "pending"]),
+        ),
       );
     const pendingCreativesCount = pendingCreatives?.count ?? 0;
     const failedBuysCount = failedBuys?.count ?? 0;
