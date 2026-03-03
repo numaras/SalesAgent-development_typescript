@@ -218,15 +218,19 @@ function PrincipalEditForm({ tenantId, principalId, onSuccess }: PrincipalEditFo
   const [submitBusy, setSubmitBusy] = useState(false);
   const [name, setName] = useState("");
   const [gamAdvertiserId, setGamAdvertiserId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     fetch(`/tenant/${tenantId}/principals/${encodeURIComponent(principalId)}/edit`, { credentials: "include" })
       .then((res) => res.ok ? res.json() : null)
-      .then((data: { tenant_name?: string; principal?: { name: string }; existing_gam_id?: string } | null) => {
+      .then((data: { tenant_name?: string; principal?: { name: string; access_token?: string }; existing_gam_id?: string } | null) => {
         if (!cancelled && data) {
           setTenantName(data.tenant_name ?? "");
-          if (data.principal) setName(data.principal.name);
+          if (data.principal) {
+            setName(data.principal.name);
+            setAccessToken(data.principal.access_token ?? "");
+          }
           if (data.existing_gam_id != null) setGamAdvertiserId(String(data.existing_gam_id));
         }
       })
@@ -266,6 +270,24 @@ function PrincipalEditForm({ tenantId, principalId, onSuccess }: PrincipalEditFo
         <div style={{ marginBottom: "0.75rem" }}>
           <label>GAM Advertiser ID <input type="text" value={gamAdvertiserId} onChange={(e) => setGamAdvertiserId(e.target.value)} style={{ width: "100%" }} /></label>
         </div>
+        {accessToken && (
+          <div style={{ marginBottom: "1rem", padding: "0.75rem", background: "#f5f5f5", borderRadius: 4, border: "1px solid #ddd" }}>
+            <div style={{ fontWeight: 600, marginBottom: "0.4rem", fontSize: "0.875rem" }}>MCP Access Token</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <code style={{ fontSize: "0.8rem", wordBreak: "break-all", flex: 1 }}>{accessToken}</code>
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(accessToken).then(() => window.alert("Copied!"))}
+                style={{ flexShrink: 0, cursor: "pointer", padding: "0.25rem 0.6rem", border: "1px solid #ccc", borderRadius: 3, background: "#fff", fontSize: "0.8rem" }}
+              >
+                Copy
+              </button>
+            </div>
+            <div style={{ marginTop: "0.4rem", fontSize: "0.75rem", color: "#666" }}>
+              Use as <code>x-adcp-auth</code> header when connecting Claude or other MCP clients.
+            </div>
+          </div>
+        )}
         <button type="submit" disabled={submitBusy}>Save</button>
       </form>
     </BaseLayout>

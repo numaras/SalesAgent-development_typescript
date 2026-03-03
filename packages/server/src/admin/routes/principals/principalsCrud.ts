@@ -121,6 +121,7 @@ const principalsCrudRoute: FastifyPluginAsync = async (fastify: FastifyInstance)
       principal: {
         principal_id: principal.principalId,
         name: principal.name,
+        access_token: principal.accessToken,
         platform_mappings: principal.platformMappings,
         created_at: principal.createdAt?.toISOString() ?? null,
       },
