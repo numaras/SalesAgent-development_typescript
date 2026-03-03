@@ -68,6 +68,16 @@ function shouldUseAgentProbe(): boolean {
   return true;
 }
 
+/** Parse an MCP response body that may be plain JSON or SSE (data: ...) format. */
+function parseMcpResponseBody(bodyText: string, contentType: string): Record<string, unknown> {
+  if (contentType.includes("text/event-stream") || bodyText.trimStart().startsWith("event:") || bodyText.trimStart().startsWith("data:")) {
+    const dataLine = bodyText.split("\n").find((l) => l.startsWith("data:"));
+    if (!dataLine) throw new Error("MCP SSE response had no data line");
+    return JSON.parse(dataLine.slice("data:".length).trim()) as Record<string, unknown>;
+  }
+  return JSON.parse(bodyText) as Record<string, unknown>;
+}
+
 async function callAgentMcpTool(
   agentUrl: string,
   authHeaderName: string | null,
@@ -75,8 +85,6 @@ async function callAgentMcpTool(
   timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   const base = agentUrl.endsWith("/") ? agentUrl.slice(0, -1) : agentUrl;
-  // No trailing slash — the creative agent redirects /mcp/ → http://.../mcp
-  // which Node.js fetch won't follow correctly for POST requests.
   const mcpUrl = base.endsWith("/mcp") ? base : `${base}/mcp`;
 
   const headers: Record<string, string> = {
@@ -87,6 +95,7 @@ async function callAgentMcpTool(
     headers[authHeaderName || "x-adcp-auth"] = authCredentials;
   }
 
+  // Step 1: initialize
   const initRes = await fetch(mcpUrl, {
     method: "POST",
     headers,
@@ -102,16 +111,21 @@ async function callAgentMcpTool(
     }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-
   if (!initRes.ok) throw new Error(`MCP initialize failed (HTTP ${initRes.status})`);
 
-  // Extract session ID from header before consuming body
-  const sessionId = initRes.headers.get("Mcp-Session-Id");
+  const sessionId = initRes.headers.get("Mcp-Session-Id") ?? initRes.headers.get("mcp-session-id");
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
+  await initRes.text().catch(() => undefined); // consume body to free HTTP/2 stream
 
-  // Consume the init response body (required for HTTP/2 + SSE to free the stream)
-  await initRes.text().catch(() => undefined);
+  // Step 2: send initialized notification (required by MCP spec before tool calls)
+  await fetch(mcpUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    signal: AbortSignal.timeout(5_000),
+  }).catch(() => undefined); // notification — ignore errors and response
 
+  // Step 3: tools/call
   const toolRes = await fetch(mcpUrl, {
     method: "POST",
     headers,
@@ -123,21 +137,10 @@ async function callAgentMcpTool(
     }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-
   if (!toolRes.ok) throw new Error(`MCP tool call failed (HTTP ${toolRes.status})`);
 
-  // The agent responds with SSE format (text/event-stream) even for single-shot calls.
-  // Parse the body text and extract the JSON from the first `data:` line.
   const bodyText = await toolRes.text();
-  let rpc: Record<string, unknown>;
-  const contentType = toolRes.headers.get("content-type") ?? "";
-  if (contentType.includes("text/event-stream") || bodyText.startsWith("event:") || bodyText.startsWith("data:")) {
-    const dataLine = bodyText.split("\n").find((l) => l.startsWith("data:"));
-    if (!dataLine) throw new Error("MCP SSE response had no data line");
-    rpc = JSON.parse(dataLine.slice("data:".length).trim()) as Record<string, unknown>;
-  } else {
-    rpc = JSON.parse(bodyText) as Record<string, unknown>;
-  }
+  const rpc = parseMcpResponseBody(bodyText, toolRes.headers.get("content-type") ?? "");
 
   if (rpc["error"]) {
     const err = rpc["error"] as Record<string, unknown>;

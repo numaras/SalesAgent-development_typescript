@@ -115,11 +115,17 @@ async function callAgentMcpTool(
 
   if (!initRes.ok) throw new Error(`HTTP ${initRes.status} during MCP initialize`);
 
-  const sessionId = initRes.headers.get("Mcp-Session-Id");
+  const sessionId = initRes.headers.get("Mcp-Session-Id") ?? initRes.headers.get("mcp-session-id");
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
-
-  // Consume init body to free the HTTP/2 stream before next request
   await initRes.text().catch(() => undefined);
+
+  // Send initialized notification before tool calls (required by MCP spec)
+  await fetch(mcpUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    signal: AbortSignal.timeout(5_000),
+  }).catch(() => undefined);
 
   const toolRes = await fetch(mcpUrl, {
     method: "POST",
@@ -136,9 +142,9 @@ async function callAgentMcpTool(
   if (!toolRes.ok) throw new Error(`HTTP ${toolRes.status} during MCP tool call`);
 
   const bodyText = await toolRes.text();
-  let rpc: Record<string, unknown>;
   const contentType = toolRes.headers.get("content-type") ?? "";
-  if (contentType.includes("text/event-stream") || bodyText.startsWith("event:") || bodyText.startsWith("data:")) {
+  let rpc: Record<string, unknown>;
+  if (contentType.includes("text/event-stream") || bodyText.trimStart().startsWith("event:") || bodyText.trimStart().startsWith("data:")) {
     const dataLine = bodyText.split("\n").find((l) => l.startsWith("data:"));
     if (!dataLine) throw new Error("MCP SSE response had no data line");
     rpc = JSON.parse(dataLine.slice("data:".length).trim()) as Record<string, unknown>;
