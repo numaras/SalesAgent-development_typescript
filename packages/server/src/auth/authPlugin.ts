@@ -37,6 +37,7 @@
  *   Guards that need auth should check `request.auth !== null` or call the helper.
  */
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from "fastify";
+import fp from "fastify-plugin";
 
 import { checkAdminToken } from "./adminTokenFallback.js";
 import { extractToken } from "./extractToken.js";
@@ -64,7 +65,7 @@ declare module "fastify" {
 // Plugin
 // ---------------------------------------------------------------------------
 
-const authPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+const authPluginFn: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // Decorate every request with a null auth context (overwritten on success).
   fastify.decorateRequest("auth", null);
 
@@ -122,5 +123,9 @@ const authPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     request.auth = { principalId, tenantId: tenantId! };
   });
 };
+
+// fp() breaks encapsulation so the decorateRequest + preHandler hook apply
+// to ALL sibling and child routes (including /mcp, /a2a, etc.).
+const authPlugin = fp(authPluginFn, { name: "auth-plugin" });
 
 export default authPlugin;
