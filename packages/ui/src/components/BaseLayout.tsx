@@ -43,6 +43,7 @@ interface NavItem {
   icon: ReactNode;
   to: string;
   match?: string;
+  exact?: boolean;
 }
 
 export function BaseLayout({ children, tenantId, tenantName, faviconUrl }: BaseLayoutProps) {
@@ -53,7 +54,7 @@ export function BaseLayout({ children, tenantId, tenantName, faviconUrl }: BaseL
 
   const navItems: NavItem[] = id
     ? [
-        { label: "Dashboard",          icon: <DashboardIcon />,      to: prefixed(`/tenant/${id}`),                          match: `/tenant/${id}` },
+        { label: "Dashboard",          icon: <DashboardIcon />,      to: prefixed(`/tenant/${id}`),                          match: `/tenant/${id}`, exact: true },
         { label: "Products",           icon: <ShoppingCartIcon />,   to: prefixed(`/tenant/${id}/products`),                 match: `/tenant/${id}/products` },
         { label: "Creatives",          icon: <PaletteIcon />,        to: prefixed(`/tenant/${id}/creatives/list`),            match: `/tenant/${id}/creatives` },
         { label: "Workflows",          icon: <AccountTreeIcon />,    to: prefixed(`/tenant/${id}/workflows`),                 match: `/tenant/${id}/workflows` },
@@ -68,10 +69,12 @@ export function BaseLayout({ children, tenantId, tenantName, faviconUrl }: BaseL
       ]
     : [];
 
-  const isActive = (item: NavItem) =>
-    item.match
+  const isActive = (item: NavItem) => {
+    if (item.exact) return location.pathname === (item.match ?? item.to);
+    return item.match
       ? location.pathname === item.match || location.pathname.startsWith(item.match + "/")
       : location.pathname === item.to;
+  };
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh", bgcolor: "background.default" }}>
