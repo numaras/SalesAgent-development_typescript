@@ -14,6 +14,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { adapterConfigs } from "../db/schema/adapterConfigs.js";
+import { principals } from "../db/schema/principals.js";
 import { buildGamClient } from "../gam/gamClient.js";
 import { mediaBuys, mediaPackages } from "../db/schema/mediaBuys.js";
 import { objectWorkflowMappings } from "../db/schema/workflowSteps.js";
@@ -188,27 +189,49 @@ async function invokeCreateAdapter(
       const advertiserName = extractAdvertiserName(request);
       const { totalBudget, currency } = extractBudgetInfo(request);
 
-      // Build GAM order object — mirrors _legacy google_ad_manager.py create_order()
+      // Look up GAM advertiserId from the principal's platform_mappings
+      const [principal] = await db
+        .select({ platformMappings: principals.platformMappings })
+        .from(principals)
+        .where(eq(principals.principalId, ctx.principalId))
+        .limit(1);
+      const gamMapping = (principal?.platformMappings as Record<string, unknown> | null)
+        ?.["google_ad_manager"] as Record<string, unknown> | undefined;
+      const advertiserId = gamMapping?.["advertiser_id"]
+        ? String(gamMapping["advertiser_id"])
+        : null;
+
+      if (!advertiserId) {
+        throw new Error(
+          `No GAM Advertiser ID found for principal '${ctx.principalId}'. ` +
+          "Set it in Admin UI → Principals → Edit → GAM Advertiser ID.",
+        );
+      }
+
+      // GAM SOAP Order fields MUST follow the WSDL sequence order exactly.
+      // v202505 sequence: name → startDateTime → endDateTime → notes →
+      //   advertiserId → traffickerId → (other optional fields)
+      const now = new Date();
+      const startDate = request.start_time && request.start_time !== "asap"
+        ? new Date(request.start_time) : now;
+      const endDate = request.end_time ? new Date(request.end_time) : null;
+
+      const toGamDateTime = (d: Date) => ({
+        date: { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() },
+        hour: d.getHours(),
+        minute: d.getMinutes(),
+        second: d.getSeconds(),
+        timeZoneId: "America/New_York",
+      });
+
       const gamOrder: Record<string, unknown> = {
         name: request.buyer_ref,
-        advertiserId: adapter.gamTrafickerId ? undefined : undefined, // resolved by GAM from buyer_ref
-        startDateTime: { date: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, day: new Date().getDate() } },
-        notes: `Created via AdCP SalesAgent | buyer_ref: ${request.buyer_ref} | advertiser: ${advertiserName}`,
+        startDateTime: toGamDateTime(startDate),
+        ...(endDate ? { endDateTime: toGamDateTime(endDate) } : {}),
+        notes: `Created via AdCP SalesAgent | advertiser: ${advertiserName} | budget: ${totalBudget} ${currency}`,
+        advertiserId,
+        ...(adapter.gamTrafickerId ? { traffickerId: String(adapter.gamTrafickerId) } : {}),
       };
-      if (request.start_time && request.start_time !== "asap") {
-        const sd = new Date(request.start_time);
-        gamOrder["startDateTime"] = {
-          date: { year: sd.getFullYear(), month: sd.getMonth() + 1, day: sd.getDate() },
-          hour: sd.getHours(), minute: sd.getMinutes(), second: sd.getSeconds(),
-        };
-      }
-      if (request.end_time) {
-        const ed = new Date(request.end_time);
-        gamOrder["endDateTime"] = {
-          date: { year: ed.getFullYear(), month: ed.getMonth() + 1, day: ed.getDate() },
-          hour: ed.getHours(), minute: ed.getMinutes(), second: ed.getSeconds(),
-        };
-      }
 
       const orders = (await (orderService as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)
         .createOrders([gamOrder])) as Array<Record<string, unknown>>;
