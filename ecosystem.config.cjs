@@ -31,8 +31,9 @@ module.exports = {
     {
       name: "adcp-server",
       script: "./node_modules/.bin/tsx",
-      args: "watch packages/server/src/server.ts",
-      // Restart on crash, but tsx watch handles file-change restarts itself
+      args: "packages/server/src/server.ts",
+      // autorestart handles crash recovery; tsx watch removed to prevent
+      // spurious restarts on file changes that cause browser page refreshes.
       autorestart: true,
       watch: false,
       env: {
