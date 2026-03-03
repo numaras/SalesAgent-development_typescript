@@ -7,6 +7,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "../db/client.js";
+import { contexts } from "../db/schema/contexts.js";
 import { creatives } from "../db/schema/creatives.js";
 import { currencyLimits } from "../db/schema/currencyLimits.js";
 import { products } from "../db/schema/products.js";
@@ -354,9 +355,15 @@ export async function createMediaBuy(
   const requiresHumanApproval =
     tenantRow?.approvalMode === "require-human" || tenantRow?.approvalMode === "manual";
 
+  // Ensure context row exists (required for workflowSteps INNER JOIN contexts in the Workflows page).
+  const contextId = `default_${ctx.tenantId}_${ctx.principalId}`;
+  const [existingCtx] = await db.select().from(contexts).where(eq(contexts.contextId, contextId)).limit(1);
+  if (!existingCtx) {
+    await db.insert(contexts).values({ contextId, tenantId: ctx.tenantId, principalId: ctx.principalId });
+  }
+
   // Create the workflow step BEFORE DB lookups so it can be updated to "failed" if they fail.
   // Parity with Python L1296-1303 (step created before product/currency validation).
-  const contextId = `default_${ctx.tenantId}_${ctx.principalId}`;
   const { stepId } = await createWorkflowStep({
     contextId,
     stepType: requiresHumanApproval ? "create_media_buy" : "media_buy_creation",
